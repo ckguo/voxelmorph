@@ -29,6 +29,18 @@ import neuron.utils as nrn_utils
 # other vm functions
 import losses
 
+def autoencoder(vol_size, enc_nf, dec_nf):
+    src = Input(shape=vol_size + (1,))
+    x_enc = [src]
+    for i in range(len(enc_nf)):
+        x_enc.append(conv_block(x_enc[-1], enc_nf[i], 2))
+    x = x_enc[-1]
+    for i in range(len(enc_nf)):
+        x = conv_block(x, dec_nf[i])
+        x = UpSampling3D()(x)
+    output = conv_block(x, 1)
+    return Model(inputs=[src], outputs=[output])
+
 
 def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
     """
