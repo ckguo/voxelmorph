@@ -15,7 +15,6 @@ import numpy as np
 from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
-from keras.losses import mean_squared_error
 
 # project imports
 import datagenerators
@@ -41,7 +40,7 @@ atlas = np.load('../data/atlas_norm.npz')
 atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(num_downsample, model_dir, gpu_id, lr, n_iterations, reg_param, model_save_iter, batch_size=1):
+def train(model, model_dir, gpu_id, lr, n_iterations, autoencoder_iters, reg_param, model_save_iter, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -70,25 +69,35 @@ def train(num_downsample, model_dir, gpu_id, lr, n_iterations, reg_param, model_
 
     # UNET filters for voxelmorph-1 and voxelmorph-2,
     # these are architectures presented in CVPR 2018
-
-    assert num_downsample <= 4, 'num_downsample has to be less than 4'
     nf_enc = [16, 32, 32, 32]
-    nf_dec = [32, 32, 32, 32]
-    if num_downsample < 4:
-        nf_enc = nf_enc[:num_downsample]
-        nf_dec = nf_dec[:num_downsample]
+    if model == 'vm1':
+        nf_dec = [32, 32, 32, 32, 8, 8]
+    else:
+        nf_dec = [32, 32, 32, 32, 32, 16, 16]
+
     # prepare the model
     # in the CVPR layout, the model takes in [image_1, image_2] and outputs [warped_image_1, flow]
     # in the experiments, we use image_2 as atlas
-    full_model, train_model = networks.autoencoder(vol_size, nf_enc, nf_dec)
-    train_model.compile(optimizer=Adam(lr=lr), 
-                  loss=[mean_squared_error])
+
+    autoencoder_path = '../models/autoencoder/' + str(autoencoder_iters) + '.h5'
+
+    # full_model, train_model = networks.unets_autoencoder(vol_size, nf_enc, nf_dec)
+    # train_model.compile(optimizer=Adam(lr=lr), 
+    #               loss=[keras.losses.mean_squared_error, losses.gradientLoss('l2')],
+    #               loss_weights=[1.0, reg_param])
+
+    model = networks.unet(vol_size, nf_enc, nf_dec)
+    model.compile(optimizer=Adam(lr=lr), 
+                  loss=[losses.autoencoderLoss(autoencoder_path), losses.gradientLoss('l2')],
+                  loss_weights=[1.0, reg_param])
+
 
     # if you'd like to initialize the data, you can do it here:
     # model.load_weights(os.path.join(model_dir, '120000.h5'))
 
     # prepare data for training
     train_example_gen = datagenerators.example_gen(train_vol_names)
+    zero_flow = np.zeros([batch_size, *vol_size, 3])
 
     # train. Note: we use train_on_batch and design out own print function as this has enabled 
     # faster development and debugging, but one could also use fit_generator and Keras callbacks.
@@ -98,7 +107,7 @@ def train(num_downsample, model_dir, gpu_id, lr, n_iterations, reg_param, model_
         X = next(train_example_gen)[0]
 
         # train
-        train_loss = train_model.train_on_batch([X], [X])
+        train_loss = model.train_on_batch([X, atlas_vol], [atlas_vol, zero_flow])
         if not isinstance(train_loss, list):
             train_loss = [train_loss]
 
@@ -107,7 +116,7 @@ def train(num_downsample, model_dir, gpu_id, lr, n_iterations, reg_param, model_
 
         # save model
         if step % model_save_iter == 0:
-            full_model.save(os.path.join(model_dir, str(step) + '.h5'))
+            model.save(os.path.join(model_dir, str(step) + '.h5'))
 
 
 def print_loss(step, training, train_loss):
@@ -131,9 +140,9 @@ def print_loss(step, training, train_loss):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--num_downsample", type=int,
-                        dest="num_downsample", default=4,
-                        help="number of times to downsample image")
+    parser.add_argument("--model", type=str, dest="model",
+                        choices=['vm1', 'vm2'], default='vm2',
+                        help="Voxelmorph-1 or 2")
     parser.add_argument("--gpu", type=int, default=0,
                         dest="gpu_id", help="gpu id number")
     parser.add_argument("--lr", type=float,
@@ -141,6 +150,9 @@ if __name__ == "__main__":
     parser.add_argument("--iters", type=int,
                         dest="n_iterations", default=150000,
                         help="number of iterations")
+    parser.add_argument("--ac_iters", type=int,
+                        dest="autoencoder_iters", default=89200,
+                        help="autoencoder number of iterations")
     parser.add_argument("--lambda", type=float,
                         dest="reg_param", default=1.0,
                         help="regularization parameter")
@@ -148,9 +160,8 @@ if __name__ == "__main__":
                         dest="model_save_iter", default=100,
                         help="frequency of model saves")
     parser.add_argument("--model_dir", type=str,
-                        dest="model_dir", default='../models/autoencoder/',
+                        dest="model_dir", default='../models/autoencoder_cost',
                         help="models folder")
 
     args = parser.parse_args()
-
     train(**vars(args))

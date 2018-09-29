@@ -39,8 +39,12 @@ def autoencoder(vol_size, enc_nf, dec_nf):
         x = conv_block(x, dec_nf[i])
         x = UpSampling3D()(x)
     output = conv_block(x, 1)
-    return Model(inputs=[src], outputs=[output])
 
+    full_model = Model(inputs=[src], outputs=[output, x_enc[-1]])
+    train_model = Model(inputs=[src], outputs=[output])
+
+    return full_model, train_model
+    
 
 def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
     """
@@ -118,6 +122,23 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True):
     model = Model(inputs=[src, tgt], outputs=[y, flow])
     return model
 
+def unets_autoencoder(vol_size, enc_nf, dec_nf, full_size=True):
+    unet = unet(vol_size, enc_nf, dec_nf, full_size=full_size)
+
+    [src, tgt] = unet.inputs
+    [y, flow] = unet.outputs
+
+    autoencoder = networks.autoencoder(vol_size, [16, 32, 32, 32], [32, 32, 32, 32])
+    autoencoder.load_weights(autoencoder_path)
+    autoencoder.trainable = False
+
+    a_y = autoencoder([y])
+    a_tgt = autoencoder([tgt])
+
+    full_model = Model(inputs=[src, tgt], outputs=[y, a_y, a_tgt, flow])
+    train_model = Model(inputs=[src, tgt], outputs=[a_y, a_tgt, flow])
+
+    return full_model, train_model
 
 def miccai2018_net(vol_size, enc_nf, dec_nf, use_miccai_int=True, int_steps=7, indexing='xy'):
     """

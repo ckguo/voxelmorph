@@ -3,12 +3,21 @@
 import tensorflow as tf
 import keras.backend as K
 import numpy as np
+import networks
 
+vol_size = (160, 192, 224)  
 # batch_sizexheightxwidthxdepthxchan
 
+def autoencoderLoss(autoencoder_path):
+    autoencoder, _ = networks.autoencoder(vol_size, [16, 32, 32, 32], [32, 32, 32, 32])
+    autoencoder.load_weights(autoencoder_path)
+    autoencoder.trainable = False
 
-
-
+    def loss(y_true, y_pred):
+        tgt_features = autoencoder(y_true)
+        src_features = autoencoder(y_pred)
+        return tf.reduce_mean(tf.square(tgt_features[1] - src_features[1]))
+    return loss
 
 
 def diceLoss(y_true, y_pred):

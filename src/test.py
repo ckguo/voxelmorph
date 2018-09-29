@@ -18,7 +18,7 @@ from medipy.metrics import dice
 import datagenerators
 
 
-def test(model_name, iter_num, gpu_id, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16,3]):
+def test(model_name, iter_num, gpu_id, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
 	"""
 	test
 
