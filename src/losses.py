@@ -4,19 +4,35 @@ import tensorflow as tf
 import keras.backend as K
 import numpy as np
 import networks
+from keras.losses import mean_squared_error
 
 vol_size = (160, 192, 224)  
 # batch_sizexheightxwidthxdepthxchan
 
-def autoencoderLoss(autoencoder_path):
-    autoencoder, _ = networks.autoencoder(vol_size, [16, 32, 32, 32], [32, 32, 32, 32])
+def normalize(features):
+    mean = tf.reduce_mean(features, axis=(1, 2, 3), keepdims=True)
+    var = tf.reduce_mean(tf.square(features - mean), axis=(1,2,3), keepdims=True)
+    return (features - mean)/tf.sqrt(var)
+
+def autoencoderLoss(autoencoder_path, num_downsample, ac_coef=1, loss_function=None, use_normalize=True):
+    enc = [16, 32, 32, 32][:num_downsample]
+    dec = [32]*num_downsample
+    autoencoder, _ = networks.autoencoder(vol_size, enc, dec)
     autoencoder.load_weights(autoencoder_path)
     autoencoder.trainable = False
 
     def loss(y_true, y_pred):
-        tgt_features = autoencoder(y_true)
-        src_features = autoencoder(y_pred)
-        return tf.reduce_mean(tf.square(tgt_features[1] - src_features[1]))
+        if use_normalize:
+            tgt_features = normalize(autoencoder(y_true)[1])
+            src_features = normalize(autoencoder(y_pred)[1])
+        else:
+            tgt_features = autoencoder(y_true)[1]
+            src_features = autoencoder(y_pred)[1]
+        ac_loss = tf.reduce_mean(tf.square(tgt_features - src_features))
+        if loss_function:
+            return ac_coef * ac_loss + loss_function(y_true, y_pred)
+        else:
+            return ac_coef * ac_loss
     return loss
 
 

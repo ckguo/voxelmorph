@@ -15,6 +15,7 @@ import numpy as np
 from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
+from keras.losses import mean_squared_error
 
 # project imports
 import datagenerators
@@ -40,7 +41,7 @@ atlas = np.load('../data/atlas_norm.npz')
 atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, model_dir, gpu_id, lr, n_iterations, autoencoder_iters, reg_param, model_save_iter, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, ac_coef, reg_param, model_save_iter, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -55,7 +56,8 @@ def train(model, model_dir, gpu_id, lr, n_iterations, autoencoder_iters, reg_par
     
     restrict_GPU_tf(str(gpu_id))
     restrict_GPU_keras(str(gpu_id))
-    
+
+    model_dir = "../models/" + model_name
     # prepare model folder
     if not os.path.isdir(model_dir):
         os.mkdir(model_dir)
@@ -79,21 +81,17 @@ def train(model, model_dir, gpu_id, lr, n_iterations, autoencoder_iters, reg_par
     # in the CVPR layout, the model takes in [image_1, image_2] and outputs [warped_image_1, flow]
     # in the experiments, we use image_2 as atlas
 
-    autoencoder_path = '../models/autoencoder/' + str(autoencoder_iters) + '.h5'
-
-    # full_model, train_model = networks.unets_autoencoder(vol_size, nf_enc, nf_dec)
-    # train_model.compile(optimizer=Adam(lr=lr), 
-    #               loss=[keras.losses.mean_squared_error, losses.gradientLoss('l2')],
-    #               loss_weights=[1.0, reg_param])
+    autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
 
     model = networks.unet(vol_size, nf_enc, nf_dec)
     model.compile(optimizer=Adam(lr=lr), 
-                  loss=[losses.autoencoderLoss(autoencoder_path), losses.gradientLoss('l2')],
+                  loss=[losses.autoencoderLoss(autoencoder_path, autoencoder_num_downsample, ac_coef, mean_squared_error), losses.gradientLoss('l2')],
                   loss_weights=[1.0, reg_param])
 
 
     # if you'd like to initialize the data, you can do it here:
-    # model.load_weights(os.path.join(model_dir, '120000.h5'))
+    if pretrained_path != None:
+        model.load_weights(pretrained_path)
 
     # prepare data for training
     train_example_gen = datagenerators.example_gen(train_vol_names)
@@ -143,6 +141,9 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, dest="model",
                         choices=['vm1', 'vm2'], default='vm2',
                         help="Voxelmorph-1 or 2")
+    parser.add_argument("--pretrained_path", type=str,
+                        dest="pretrained_path", default='../models/cvpr/61500.h5',
+                        help="path of pretrained model")
     parser.add_argument("--gpu", type=int, default=0,
                         dest="gpu_id", help="gpu id number")
     parser.add_argument("--lr", type=float,
@@ -151,16 +152,25 @@ if __name__ == "__main__":
                         dest="n_iterations", default=150000,
                         help="number of iterations")
     parser.add_argument("--ac_iters", type=int,
-                        dest="autoencoder_iters", default=89200,
+                        dest="autoencoder_iters", default=135400,
                         help="autoencoder number of iterations")
+    parser.add_argument("--ac_model", type=str,
+                        dest="autoencoder_model", default='autoencoder_3',
+                        help="autoencoder model name")
+    parser.add_argument("--ac_num_downsample", type=int,
+                        dest="autoencoder_num_downsample", default=3,
+                        help="autoencoder number of downsample layers")
+    parser.add_argument("--ac_coef", type=float,
+                        dest="ac_coef", default=1,
+                        help="coefficient to weight autoencoder loss")
     parser.add_argument("--lambda", type=float,
                         dest="reg_param", default=1.0,
                         help="regularization parameter")
     parser.add_argument("--checkpoint_iter", type=int,
                         dest="model_save_iter", default=100,
                         help="frequency of model saves")
-    parser.add_argument("--model_dir", type=str,
-                        dest="model_dir", default='../models/autoencoder_cost',
+    parser.add_argument("--model_name", type=str,
+                        dest="model_name", default='autoencoder_cost',
                         help="models folder")
 
     args = parser.parse_args()

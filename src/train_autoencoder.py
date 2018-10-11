@@ -15,7 +15,7 @@ import numpy as np
 from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
-from keras.losses import mean_squared_error
+from keras.losses import mean_absolute_error
 
 # project imports
 import datagenerators
@@ -82,7 +82,7 @@ def train(num_downsample, model_dir, gpu_id, lr, n_iterations, reg_param, model_
     # in the experiments, we use image_2 as atlas
     full_model, train_model = networks.autoencoder(vol_size, nf_enc, nf_dec)
     train_model.compile(optimizer=Adam(lr=lr), 
-                  loss=[mean_squared_error])
+                  loss=[mean_absolute_error])
 
     # if you'd like to initialize the data, you can do it here:
     # model.load_weights(os.path.join(model_dir, '120000.h5'))

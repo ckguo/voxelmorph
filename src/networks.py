@@ -40,7 +40,7 @@ def autoencoder(vol_size, enc_nf, dec_nf):
         x = UpSampling3D()(x)
     output = conv_block(x, 1)
 
-    full_model = Model(inputs=[src], outputs=[output, x_enc[-1]])
+    full_model = Model(inputs=[src], outputs=[output, x_enc[1]])
     train_model = Model(inputs=[src], outputs=[output])
 
     return full_model, train_model
