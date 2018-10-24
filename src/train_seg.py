@@ -16,6 +16,7 @@ from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
 from keras.losses import mean_squared_error
+import scipy.io as sio
 
 # project imports
 import datagenerators
@@ -34,14 +35,14 @@ vol_size = (160, 192, 224)
 # and segmentations
 base_data_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/'
 train_vol_names = glob.glob(base_data_dir + 'train/vols/*.npz')
-random.shuffle(train_vol_names)  # shuffle volume list
+train_seg_dir = base_data_dir + 'train/asegs/'
 
 # load atlas from provided files. This atlas is 160x192x224.
 atlas = np.load('../data/atlas_norm.npz')
-atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
+# atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, ac_coef, use_normalize, norm_percentile, reg_param, model_save_iter, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, ac_coef, use_normalize, norm_percentile, reg_param, gamma, model_save_iter, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -57,6 +58,17 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
     restrict_GPU_tf(str(gpu_id))
     restrict_GPU_keras(str(gpu_id))
+
+    train_labels = sio.loadmat('../data/labels.mat')['labels'][0]
+    n_labels = train_labels.shape[0]
+
+    atlas_vol = atlas['vol']
+    atlas_seg = atlas['seg']
+    atlas_vol = np.reshape(atlas_vol, (1,)+atlas_vol.shape+(1,))
+    atlas_seg = np.reshape(atlas_seg, (1,)+atlas_seg.shape+(1,))
+
+    atlas_seg = datagenerators.split_seg_into_channels(atlas_seg, train_labels)
+    atlas_seg = datagenerators.downsample(atlas_seg)
 
     model_dir = "../models/" + model_name
     # prepare model folder
@@ -84,10 +96,10 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
     autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
 
-    model = networks.unet(vol_size, nf_enc, nf_dec)
+    model = networks.unet(vol_size, nf_enc, nf_dec, use_seg=True, n_seg=len(train_labels))
     model.compile(optimizer=Adam(lr=lr), 
-                  loss=[losses.autoencoderLoss(autoencoder_path, autoencoder_num_downsample, ac_coef, mean_squared_error, use_normalize, norm_percentile), losses.gradientLoss('l2')],
-                  loss_weights=[1.0, reg_param])
+                  loss=['mse', losses.gradientLoss('l2'), losses.diceLoss],
+                  loss_weights=[1.0, reg_param, gamma])
 
 
     # if you'd like to initialize the data, you can do it here:
@@ -95,7 +107,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
         model.load_weights(pretrained_path)
 
     # prepare data for training
-    train_example_gen = datagenerators.example_gen(train_vol_names)
+    train_example_gen = datagenerators.example_gen(train_vol_names, return_segs=True, seg_dir=train_seg_dir)
     zero_flow = np.zeros([batch_size, *vol_size, 3])
 
     # train. Note: we use train_on_batch and design out own print function as this has enabled 
@@ -103,10 +115,14 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
     for step in range(0, n_iterations):
 
         # get data
-        X = next(train_example_gen)[0]
+        X = next(train_example_gen)
+        X_seg = X[1]
+
+        X_seg = datagenerators.split_seg_into_channels(X_seg, train_labels)
+        X_seg = datagenerators.downsample(X_seg)
 
         # train
-        train_loss = model.train_on_batch([X, atlas_vol], [atlas_vol, zero_flow])
+        train_loss = model.train_on_batch([X[0], atlas_vol, X_seg], [atlas_vol, zero_flow, atlas_seg])
         if not isinstance(train_loss, list):
             train_loss = [train_loss]
 
@@ -173,6 +189,9 @@ if __name__ == "__main__":
     parser.add_argument("--lambda", type=float,
                         dest="reg_param", default=0.01,
                         help="regularization parameter")
+    parser.add_argument("--gamma", type=float,
+                        dest="gamma", default=1,
+                        help="gamma regularization parameter")
     parser.add_argument("--checkpoint_iter", type=int,
                         dest="model_save_iter", default=100,
                         help="frequency of model saves")

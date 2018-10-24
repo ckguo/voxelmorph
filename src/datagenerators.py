@@ -34,3 +34,15 @@ def example_gen(vol_names, return_segs=False, seg_dir=None):
         # print vol_names[idx] + "," + seg_dir + name[0:-8]+'aseg.npz'
 
         yield tuple(return_vals)
+
+
+def split_seg_into_channels(seg, labels, dn=1):
+    seg_new = np.zeros((seg.shape[0:4] + (len(labels),)))
+
+    for i in range(len(labels)):
+        seg_new[:, :, :, :, i] = (seg == labels[i])[:, :, :, :, 0]
+
+    return seg_new
+
+def downsample(X):
+    return X[:, 0:-1:2, 0:-1:2, 0:-1:2, :]

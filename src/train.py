@@ -15,6 +15,7 @@ import numpy as np
 from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
+from keras.losses import mean_squared_error
 
 # project imports
 import datagenerators
@@ -39,7 +40,7 @@ atlas = np.load('../data/atlas_norm.npz')
 atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, model_dir, gpu_id, lr, n_iterations, reg_param, model_save_iter, batch_size=1):
+def train(model, model_dir, gpu_id, lr, n_iterations, reg_param, model_save_iter, use_mse, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -75,10 +76,14 @@ def train(model, model_dir, gpu_id, lr, n_iterations, reg_param, model_save_iter
     # in the CVPR layout, the model takes in [image_1, image_2] and outputs [warped_image_1, flow]
     # in the experiments, we use image_2 as atlas
     model = networks.unet(vol_size, nf_enc, nf_dec)
-    model.compile(optimizer=Adam(lr=lr), 
-                  loss=[losses.cc3D(), losses.gradientLoss('l2')],
-                  loss_weights=[1.0, reg_param])
-
+    if use_mse:
+        model.compile(optimizer=Adam(lr=lr), 
+                      loss=[mean_squared_error, losses.gradientLoss('l2')],
+                      loss_weights=[1.0, reg_param])
+    else:
+        model.compile(optimizer=Adam(lr=lr), 
+                      loss=[losses.cc3D(), losses.gradientLoss('l2')],
+                      loss_weights=[1.0, reg_param])
     # if you'd like to initialize the data, you can do it here:
     # model.load_weights(os.path.join(model_dir, '120000.h5'))
 
@@ -146,6 +151,8 @@ if __name__ == "__main__":
     parser.add_argument("--model_dir", type=str,
                         dest="model_dir", default='../models/',
                         help="models folder")
+    parser.add_argument('--mse', dest='use_mse', action='store_true')
+    parser.set_defaults(use_mse=False)
 
     args = parser.parse_args()
     train(**vars(args))

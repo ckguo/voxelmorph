@@ -95,7 +95,49 @@ def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
     return Model(inputs=[src, tgt], outputs=[x])
 
 
-def unet(vol_size, enc_nf, dec_nf, full_size=True):
+def meshgrid(height, width, depth):
+    x_t = tf.matmul(tf.ones(shape=tf.stack([height, 1])),
+          tf.transpose(tf.expand_dims(tf.linspace(0.0,
+                              tf.cast(width, tf.float32)-1.0, width), 1), [1, 0]))
+    y_t = tf.matmul(tf.expand_dims(tf.linspace(0.0,
+                        tf.cast(height, tf.float32)-1.0, height), 1),
+          tf.ones(shape=tf.stack([1, width])))
+
+    x_t = tf.tile(tf.expand_dims(x_t, 2), [1, 1, depth])
+    y_t = tf.tile(tf.expand_dims(y_t, 2), [1, 1, depth])
+
+    z_t = tf.linspace(0.0, tf.cast(depth, tf.float32)-1.0, depth)
+    z_t = tf.expand_dims(tf.expand_dims(z_t, 0), 0)
+    z_t = tf.tile(z_t, [height, width, 1])
+    
+    return x_t, y_t, z_t
+
+def interp_downsampling(V):
+    grid = nrn_utils.volshape_to_ndgrid([f/2 for f in V.get_shape().as_list()[1:-1]])
+    grid = [tf.cast(f, 'float32') for f in grid]
+    grid = [tf.expand_dims(f*2 - f, 0) for f in grid]
+    offset = tf.stack(grid, len(grid) + 1)
+
+
+    # [xx, yy, zz] = meshgrid(tf.cast(tf.shape(V)[1]/2, tf.int32), 
+    #                         tf.cast(tf.shape(V)[2]/2, tf.int32),
+    #                         tf.cast(tf.shape(V)[3]/2, tf.int32))
+    # print('xx', xx)
+    # print('yy', yy)
+    # print('zz', zz)
+    # xx = tf.expand_dims(xx*2.0-xx, 0)
+    # yy = tf.expand_dims(yy*2.0-yy, 0)
+    # zz = tf.expand_dims(zz*2.0-zz, 0)
+
+    # offset = tf.stack([xx, yy, zz], 4)
+    print(V)
+    print(V.get_shape().as_list())
+    print(offset)
+    V = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([V, offset])
+
+    return V
+
+def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
     """
     unet architecture for voxelmorph models presented in the CVPR 2018 paper. 
     You may need to modify this code (e.g., number of layers) to suit your project needs.
@@ -116,10 +158,23 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True):
     flow = Conv3D(3, kernel_size=3, padding='same',
                   kernel_initializer=RandomNormal(mean=0.0, stddev=1e-5), name='flow')(x)
 
+    print('src', src)
+    print('flow', flow)
     # warp the source with the flow
     y = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([src, flow])
     # prepare model
-    model = Model(inputs=[src, tgt], outputs=[y, flow])
+    if not use_seg:
+        model = Model(inputs=[src, tgt], outputs=[y, flow])
+    else:
+        downfac = 2
+        src_seg = Input(
+            shape=(vol_size[0]/downfac, vol_size[1]/downfac, vol_size[2]/downfac, n_seg))
+
+        flow_dn = Lambda(interp_downsampling)(flow)
+        flow_dn = Lambda(lambda arg: arg/2.0)(flow_dn)
+        y_seg = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([src_seg, flow_dn])
+
+        model = Model(inputs=[src, tgt, src_seg], outputs=[y, flow, y_seg])
     return model
 
 def unets_autoencoder(vol_size, enc_nf, dec_nf, full_size=True):

@@ -5,24 +5,45 @@ import keras.backend as K
 import numpy as np
 import networks
 from keras.losses import mean_squared_error
+import pickle
 
 vol_size = (160, 192, 224)  
 # batch_sizexheightxwidthxdepthxchan
 
-def normalize(features):
-    mean = tf.reduce_mean(features, axis=(1, 2, 3), keepdims=True)
-    var = tf.reduce_mean(tf.square(features - mean), axis=(1,2,3), keepdims=True)
-    return (features - mean)/tf.sqrt(var)
+# def normalize(features):
+#     mean = tf.reduce_mean(features, axis=(1, 2, 3), keepdims=True)
+#     var = tf.reduce_mean(tf.square(features - mean), axis=(1,2,3), keepdims=True)
+#     return (features - mean)/tf.sqrt(var)
 
-def autoencoderLoss(autoencoder_path, num_downsample, ac_coef=1, loss_function=None, use_normalize=True):
+# def normalize_percentile(features, percentile):
+    # assert percentile > 50
+    # top = tf.contrib.distributions.percentile(features, percentile, axis=(1,2,3), keep_dims=True)
+    # bottom = tf.contrib.distributions.percentile(features, 100-percentile, axis=(1,2,3), keep_dims=True)
+    # return (features - bottom)/(top-bottom)
+
+def normalize_percentile(features, percentile, feature_stats):
+    pcs = feature_stats[percentile]
+    features = features / pcs[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+    return tf.clip_by_value(features, 0, 1)
+
+def autoencoderLoss(autoencoder_path, num_downsample, ac_coef=1, loss_function=None, use_normalize=True, percentile=None):
     enc = [16, 32, 32, 32][:num_downsample]
     dec = [32]*num_downsample
     autoencoder, _ = networks.autoencoder(vol_size, enc, dec)
     autoencoder.load_weights(autoencoder_path)
     autoencoder.trainable = False
 
+    with open('feature_stats.txt', 'rb') as file:
+        feature_stats = pickle.loads(file.read()) # use `pickle.loads` to do the reverse
+
+    print('use_normalize:', use_normalize)
+    print('percentile:', percentile)
+
     def loss(y_true, y_pred):
-        if use_normalize:
+        if percentile != None:
+            tgt_features = normalize_percentile(autoencoder(y_true)[1], percentile, feature_stats)
+            src_features = normalize_percentile(autoencoder(y_pred)[1], percentile, feature_stats)
+        elif use_normalize:
             tgt_features = normalize(autoencoder(y_true)[1])
             src_features = normalize(autoencoder(y_pred)[1])
         else:
