@@ -94,24 +94,6 @@ def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
 
     return Model(inputs=[src, tgt], outputs=[x])
 
-
-def meshgrid(height, width, depth):
-    x_t = tf.matmul(tf.ones(shape=tf.stack([height, 1])),
-          tf.transpose(tf.expand_dims(tf.linspace(0.0,
-                              tf.cast(width, tf.float32)-1.0, width), 1), [1, 0]))
-    y_t = tf.matmul(tf.expand_dims(tf.linspace(0.0,
-                        tf.cast(height, tf.float32)-1.0, height), 1),
-          tf.ones(shape=tf.stack([1, width])))
-
-    x_t = tf.tile(tf.expand_dims(x_t, 2), [1, 1, depth])
-    y_t = tf.tile(tf.expand_dims(y_t, 2), [1, 1, depth])
-
-    z_t = tf.linspace(0.0, tf.cast(depth, tf.float32)-1.0, depth)
-    z_t = tf.expand_dims(tf.expand_dims(z_t, 0), 0)
-    z_t = tf.tile(z_t, [height, width, 1])
-    
-    return x_t, y_t, z_t
-
 def interp_downsampling(V):
     grid = nrn_utils.volshape_to_ndgrid([f/2 for f in V.get_shape().as_list()[1:-1]])
     grid = [tf.cast(f, 'float32') for f in grid]
@@ -130,10 +112,11 @@ def interp_downsampling(V):
     # zz = tf.expand_dims(zz*2.0-zz, 0)
 
     # offset = tf.stack([xx, yy, zz], 4)
-    print(V)
-    print(V.get_shape().as_list())
-    print(offset)
-    V = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([V, offset])
+
+    # print(V)
+    # print(V.get_shape().as_list())
+    # print(offset)
+    V = nrn_layers.SpatialTransformer(interp_method='linear')([V, offset])
 
     return V
 
