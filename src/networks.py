@@ -95,30 +95,20 @@ def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
     return Model(inputs=[src, tgt], outputs=[x])
 
 def interp_downsampling(V):
-    grid = nrn_utils.volshape_to_ndgrid([f/2 for f in V.get_shape().as_list()[1:-1]])
-    grid = [tf.cast(f, 'float32') for f in grid]
-    grid = [tf.expand_dims(f*2 - f, 0) for f in grid]
-    offset = tf.stack(grid, len(grid) + 1)
-
-
-    # [xx, yy, zz] = meshgrid(tf.cast(tf.shape(V)[1]/2, tf.int32), 
-    #                         tf.cast(tf.shape(V)[2]/2, tf.int32),
-    #                         tf.cast(tf.shape(V)[3]/2, tf.int32))
-    # print('xx', xx)
-    # print('yy', yy)
-    # print('zz', zz)
-    # xx = tf.expand_dims(xx*2.0-xx, 0)
-    # yy = tf.expand_dims(yy*2.0-yy, 0)
-    # zz = tf.expand_dims(zz*2.0-zz, 0)
-
+    # [xx, yy, zz] = nrn_utils.volshape_to_ndgrid([f/2 for f in V.get_shape().as_list()[1:4]])
+    # xx = tf.cast(xx, 'float32')
+    # yy = tf.cast(yy, 'float32')
+    # zz = tf.cast(zz, 'float32')
+    # xx = tf.expand_dims(xx*2-xx, 0)
+    # yy = tf.expand_dims(yy*2-yy, 0)
+    # zz = tf.expand_dims(zz*2-zz, 0)
     # offset = tf.stack([xx, yy, zz], 4)
 
-    # print(V)
-    # print(V.get_shape().as_list())
-    # print(offset)
-    V = nrn_layers.SpatialTransformer(interp_method='linear')([V, offset])
+    # V = nrn_layers.SpatialTransformer(interp_method='linear')([V, offset])
 
-    return V
+    # return V
+
+    return V[:, ::2, ::2, ::2, :]
 
 def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
     """
