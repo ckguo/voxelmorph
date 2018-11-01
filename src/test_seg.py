@@ -19,6 +19,7 @@ import medipy
 import networks
 from medipy.metrics import dice
 import datagenerators
+from datagenerators import normalize_percentile
 
 # Test file and anatomical labels we want to evaluate
 test_brain_file = open('val_files.txt')
@@ -37,7 +38,7 @@ def append_to_dict(d, key, value):
     lst.append(value)
     d[key] = lst
 
-def test(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
+def test(model_name, iter_num, gpu_id, n_test, filename, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
     """
     test
 
@@ -78,11 +79,15 @@ def test(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_enc=[1
     autoencoder.load_weights(autoencoder_path)
     autoencoder.trainable = False
 
+    with open('feature_stats.txt', 'rb') as file:
+        feature_stats = pickle.loads(file.read()) # use `pickle.loads` to do the reverse
+
     xx = np.arange(vol_size[1])
     yy = np.arange(vol_size[0])
     zz = np.arange(vol_size[2])
     grid = np.rollaxis(np.array(np.meshgrid(xx, yy, zz)), 0, 4)
 
+    percentile = 99
     dice_means = []
 
     results = {}
@@ -99,6 +104,8 @@ def test(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_enc=[1
             warped_image = pred[0][:, :, :, :, :]
             _, pred_ac_features = autoencoder.predict([warped_image])
             _, orig_ac_features = autoencoder.predict([X_vol])
+            normalized_pred = normalize_percentile(pred_ac_features, percentile, feature_stats)
+            normalized_orig = normalize_percentile(orig_ac_features, percentile, feature_stats)
 
         # Warp segments with flow
         flow = pred[1][0, :, :, :, :]
@@ -115,8 +122,8 @@ def test(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_enc=[1
         res['dice_std'] = std
 
         for i in range(16):
-            pred_feature = pred_ac_features[:,:,:,:,i]
-            orig_feature = orig_ac_features[:,:,:,:,i]
+            pred_feature = normalized_pred[:,:,:,:,i]
+            orig_feature = normalized_orig[:,:,:,:,i]
             append_to_dict(res, 'l1_diff', np.mean(np.abs(pred_feature-orig_feature)))
             append_to_dict(res, 'l2_diff', np.mean(np.square(pred_feature-orig_feature)))
 
@@ -143,8 +150,8 @@ def test(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_enc=[1
         print(key)
         print(value)
 
-    with open('seg_feature_stats.txt', 'wb') as file:
+    with open(filename, 'wb') as file:
         file.write(pickle.dumps(results)) # use `pickle.loads` to do the reverse
 
 if __name__ == "__main__":
-    test(sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]))
+    test(sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])

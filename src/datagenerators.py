@@ -46,3 +46,8 @@ def split_seg_into_channels(seg, labels, dn=1):
 
 def downsample(X):
     return X[:, 0:-1:2, 0:-1:2, 0:-1:2, :]
+
+def normalize_percentile(features, percentile, feature_stats):
+    pcs = feature_stats[percentile]
+    features = features / pcs[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+    return tf.clip_by_value(features, 0, 1)
