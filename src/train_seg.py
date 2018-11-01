@@ -42,7 +42,7 @@ atlas = np.load('../data/atlas_norm.npz')
 # atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, ac_coef, use_normalize, norm_percentile, reg_param, gamma, model_save_iter, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, ac_coef, use_normalize, norm_percentile, use_mse, reg_param, gamma, model_save_iter, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -96,10 +96,12 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
     autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
 
+    mse_coef = 1.0 if use_mse else 0
+    print('mse coef', mse_coef)
     model = networks.unet(vol_size, nf_enc, nf_dec, use_seg=True, n_seg=len(train_labels))
     model.compile(optimizer=Adam(lr=lr), 
                   loss=['mse', losses.gradientLoss('l2'), losses.diceLoss],
-                  loss_weights=[1.0, reg_param, gamma])
+                  loss_weights=[mse_coef, reg_param, gamma])
 
 
     # if you'd like to initialize the data, you can do it here:
@@ -186,6 +188,9 @@ if __name__ == "__main__":
     parser.add_argument("--norm_percentile", type=float,
                         dest="norm_percentile", default=None,
                         help="percentile used when normalizing")
+    parser.add_argument('--mse', dest='use_mse', action='store_true')
+    parser.add_argument('--no-mse', dest='use_mse', action='store_false')
+    parser.set_defaults(use_mse=True)
     parser.add_argument("--lambda", type=float,
                         dest="reg_param", default=0.01,
                         help="regularization parameter")
