@@ -1,6 +1,6 @@
 import os
 import numpy as np
-
+import tensorflow as tf
 
 def load_example_by_name(vol_name, seg_name):
 
@@ -50,4 +50,4 @@ def downsample(X):
 def normalize_percentile(features, percentile, feature_stats):
     pcs = feature_stats[percentile]
     features = features / pcs[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
-    return tf.clip_by_value(features, 0, 1)
+    return np.clip(features, 0, 1)

@@ -84,9 +84,14 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
     autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
 
+    ac_weights = [0]*16
+    ac_weights[2] = 1
+    ac_weights[7] = 1
+    ac_weights[13] = 1
+
     model = networks.unet(vol_size, nf_enc, nf_dec)
     model.compile(optimizer=Adam(lr=lr), 
-                  loss=[losses.autoencoderLoss(autoencoder_path, autoencoder_num_downsample, ac_coef, mean_squared_error, use_normalize, norm_percentile), losses.gradientLoss('l2')],
+                  loss=[losses.autoencoderLoss(autoencoder_path, autoencoder_num_downsample, ac_weights, ac_coef, mean_squared_error, use_normalize, norm_percentile), losses.gradientLoss('l2')],
                   loss_weights=[1.0, reg_param])
 
 

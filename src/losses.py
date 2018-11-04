@@ -26,7 +26,7 @@ def normalize_percentile(features, percentile, feature_stats):
     features = features / pcs[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
     return tf.clip_by_value(features, 0, 1)
 
-def autoencoderLoss(autoencoder_path, num_downsample, ac_coef=1, loss_function=None, use_normalize=True, percentile=None):
+def autoencoderLoss(autoencoder_path, num_downsample, ac_weights, ac_coef=1, loss_function=None, use_normalize=True, percentile=None):
     enc = [16, 32, 32, 32][:num_downsample]
     dec = [32]*num_downsample
     autoencoder, _ = networks.autoencoder(vol_size, enc, dec)
@@ -49,9 +49,10 @@ def autoencoderLoss(autoencoder_path, num_downsample, ac_coef=1, loss_function=N
         else:
             tgt_features = autoencoder(y_true)[1]
             src_features = autoencoder(y_pred)[1]
-        ac_loss = tf.reduce_mean(tf.square(tgt_features - src_features))
+        ac_loss = tf.reduce_mean(tf.square(tgt_features - src_features), axis=(0, 1, 2, 3))
+        ac_loss_weighted = tf.reduce_sum(tf.multiply(ac_loss, ac_weights))
         if loss_function:
-            return ac_coef * ac_loss + loss_function(y_true, y_pred)
+            return ac_coef * ac_loss_weighted + loss_function(y_true, y_pred)
         else:
             return ac_coef * ac_loss
     return loss
