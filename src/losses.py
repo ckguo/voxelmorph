@@ -7,6 +7,7 @@ import networks
 from keras.losses import mean_squared_error
 import pickle
 
+
 vol_size = (160, 192, 224)  
 # batch_sizexheightxwidthxdepthxchan
 
@@ -21,12 +22,15 @@ vol_size = (160, 192, 224)
     # bottom = tf.contrib.distributions.percentile(features, 100-percentile, axis=(1,2,3), keep_dims=True)
     # return (features - bottom)/(top-bottom)
 
-def normalize_percentile(features, percentile, feature_stats):
-    pcs = feature_stats[percentile]
-    features = features / pcs[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+def normalize_percentile(features, percentile, feature_stats, layer=0, twod=False):
+    pcs = feature_stats[layer][percentile]
+    if not twod:
+        features = features / pcs[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+    else:
+        features = features / pcs[np.newaxis, np.newaxis, np.newaxis, :]
     return tf.clip_by_value(features, 0, 1)
 
-def autoencoderLoss(autoencoder_path, num_downsample, ac_weights, ac_coef=1, loss_function=None, use_normalize=True, percentile=None):
+def autoencoderLoss(autoencoder_path, num_downsample, ac_weights, ac_coef=1, loss_function=None, percentile=None):
     enc = [16, 32, 32, 32][:num_downsample]
     dec = [32]*num_downsample
     autoencoder, _ = networks.autoencoder(vol_size, enc, dec)
@@ -36,26 +40,212 @@ def autoencoderLoss(autoencoder_path, num_downsample, ac_weights, ac_coef=1, los
     with open('feature_stats.txt', 'rb') as file:
         feature_stats = pickle.loads(file.read()) # use `pickle.loads` to do the reverse
 
-    print('use_normalize:', use_normalize)
     print('percentile:', percentile)
 
     def loss(y_true, y_pred):
-        if percentile != None:
-            tgt_features = normalize_percentile(autoencoder(y_true)[1], percentile, feature_stats)
-            src_features = normalize_percentile(autoencoder(y_pred)[1], percentile, feature_stats)
-        elif use_normalize:
-            tgt_features = normalize(autoencoder(y_true)[1])
-            src_features = normalize(autoencoder(y_pred)[1])
-        else:
-            tgt_features = autoencoder(y_true)[1]
-            src_features = autoencoder(y_pred)[1]
-        ac_loss = tf.reduce_mean(tf.square(tgt_features - src_features), axis=(0, 1, 2, 3))
-        ac_loss_weighted = tf.reduce_sum(tf.multiply(ac_loss, ac_weights))
+        tgt_ac_features = autoencoder(y_true)[1:]
+        src_ac_features = autoencoder(y_pred)[1:]
+        idx = 0
+
+        ac_loss_weighted = 0
+
+        for i in range(num_downsample):
+            if percentile != None:
+                tgt_features = normalize_percentile(tgt_ac_features[i], percentile, feature_stats, i)
+                src_features = normalize_percentile(src_ac_features[i], percentile, feature_stats, i)
+            else:
+                print('no normalization!')
+                tgt_features = tgt_ac_features[i]
+                src_features = src_ac_features[i]
+            ac_loss = tf.reduce_mean(tf.square(tgt_features - src_features), axis=(0, 1, 2, 3))
+            ac_loss_weighted += tf.reduce_sum(tf.multiply(ac_loss, ac_weights[idx:idx+enc[i]]))
+
+            idx += enc[i]
+
+        loss_function = None
         if loss_function:
             return ac_coef * ac_loss_weighted + loss_function(y_true, y_pred)
         else:
-            return ac_coef * ac_loss
+            return ac_coef * ac_loss_weighted
     return loss
+
+def segNetworkLoss(seg_path, feature_coef=1, loss_function=None, feature_weights=None, percentile=None):
+    # unet_full = networks.unet_full(vol_size, nf_enc, nf_dec)
+    # unet_full.load_weights(seg_path)
+    # unet_full.trainable = False
+
+    feature_model, num_features = networks.segmenter_feature_model(seg_path)
+
+    # for i in range(len(model.layers)):
+    #     l = model.layers[i]
+    #     print('layer', i, l.output)
+
+    if percentile != None:
+        with open('seg_feature_stats.txt', 'rb') as file:
+            feature_stats = pickle.loads(file.read()) # use `pickle.loads` to do the reverse
+    # feature_weights = [1]*sum(num_features)
+    print('percentile:', percentile)
+
+    def loss(y_true, y_pred):
+        tgt_seg_features = feature_model(tf.transpose(y_true[0,:,:,:,:], perm=[2,0,1,3]))
+        src_seg_features = feature_model(tf.transpose(y_pred[0,:,:,:,:], perm=[2,0,1,3]))
+        idx = 0
+
+        feature_loss_weighted = 0
+
+        for i in range(1):
+        # for i in range(len(tgt_seg_features)):
+            if percentile != None:
+                tgt_features = normalize_percentile(tgt_seg_features[i], percentile, feature_stats, i, twod=True)
+                src_features = normalize_percentile(src_seg_features[i], percentile, feature_stats, i, twod=True)
+            else:
+                print('no normalization!')
+                tgt_features = tgt_seg_features[i]
+                src_features = src_seg_features[i]
+            feature_loss = tf.reduce_mean(tf.square(tgt_features - src_features), axis=(0, 1, 2))
+
+            if feature_weights != None:
+                feature_loss_weighted += tf.reduce_sum(tf.multiply(feature_loss, feature_weights[idx:idx+num_features[i]]))
+            else:
+                feature_loss_weighted += tf.reduce_sum(feature_loss)
+
+            idx += num_features[i]
+            # print('idx', idx)
+
+        loss_function = None
+        if loss_function:
+            return feature_coef * feature_loss_weighted + loss_function(y_true, y_pred)
+        else:
+            return feature_coef * feature_loss_weighted
+    return loss
+
+
+def mutualInformation(bin_centers,
+                      sigma=None,    # sigma for soft MI. If not provided, it will be half of a bin length
+                      weights=None,  # optional weights, size [1, nb_labels]
+                      vox_weights=None):
+    """
+    Mutual Information for image-image pairs
+
+    This function is particular to my current setup (hence the sandbox), it assumes
+    that y_true and y_pred are both (batch_sizexheightxwidthxdepthxchan)
+
+        
+    # some interactive tests with keras' K.eval
+    yp = np.random.random((3, 160, 190, 5))
+    yp = yp / np.sum(yp, 3, keepdims=True)
+    y_pred = K.variable(yp)
+    y_true = K.variable(np.random.random((3, 160, 190, 1)))
+    
+    nb_bins = 3
+    bin_centers = np.linspace(0, 1, nb_bins*2+1)[1::2]
+    
+    print("mi:", K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[0]))
+    
+    ps = K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[1])
+    print("ps:", ps, np.sum(ps))
+    
+    pi = K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[2])
+    print("pi:", pi, np.sum(pi))
+    
+    psi = K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[3])
+    print("psi")
+    print(psi)
+    
+    print("psi_s")
+    print(np.sum(psi, 1)[0:5])
+    
+    print("psi_i")
+    print(np.sum(psi, 0))
+        
+    """
+
+    """ prepare MI. """
+    vol_bin_centers = K.variable(bin_centers)
+    weights = None if weights is None else K.variable(weights)
+    vox_weights = None if vox_weights is None else K.variable(vox_weights)
+    sigma = sigma
+    
+    if sigma is None:
+        sigma = np.mean(np.diff(bin_centers)/2)
+    preterm = K.variable(1 / (2 * np.square(sigma)))
+
+    def mi(y_true, y_pred):
+        """ soft mutual info """
+
+        # reshape: flatten images into shape (batch_size, heightxwidthxdepthxchan, 1)
+        y_true = K.reshape(y_true, (-1, K.prod(K.shape(y_true)[1:])))
+        y_true = K.expand_dims(y_true, 2)
+        y_pred = K.reshape(y_pred, (-1, K.prod(K.shape(y_pred)[1:])))
+        y_pred = K.expand_dims(y_pred, 2)
+        
+        nb_voxels = tf.cast(K.shape(y_pred)[1], tf.float32)
+
+        # reshape bin centers to be (1, 1, B)
+        o = [1, 1, np.prod(vol_bin_centers.get_shape().as_list())]
+        vbc = K.reshape(vol_bin_centers, o)
+        
+        # compute image terms
+        I_a = K.exp(- preterm * K.square(y_true  - vbc))
+        I_a /= K.sum(I_a, -1, keepdims=True)
+
+        I_b = K.exp(- preterm * K.square(y_pred  - vbc))
+        I_b /= K.sum(I_b, -1, keepdims=True)
+
+        # compute probabilities
+        I_a_permute = K.permute_dimensions(I_a, (0,2,1))
+        pab = K.batch_dot(I_a_permute, I_b)  # should be the right size now, nb_labels x nb_bins
+        pab /= nb_voxels
+        pa = tf.reduce_mean(I_a, 1, keep_dims=True)
+        pb = tf.reduce_mean(I_b, 1, keep_dims=True)
+        
+        papb = K.batch_dot(K.permute_dimensions(pa, (0,2,1)), pb) + K.epsilon()
+        mi = K.sum(K.sum(pab * K.log(pab/papb + K.epsilon()), 1), 1)
+
+        print('mi', mi)
+        return mi
+
+    def loss(y_true, y_pred):
+        return -mi(y_true, y_pred)
+
+    return loss
+'''
+    def mean_mi(self, y_true, y_pred):
+        """ weighted mean mi across all patches and labels """
+
+        # compute dice, which will now be [batch_size, nb_labels]
+        mi_metric = self.mi(y_true, y_pred)
+
+        # weigh the entries in the dice matrix:
+        if self.weights is not None:
+            mi_metric *= self.weights
+        if self.vox_weights is not None:
+            mi_metric *= self.vox_weights
+
+        # return one minus mean dice as loss
+        mean_mi_metric = K.mean(mi_metric)
+        tf.verify_tensor_all_finite(mean_mi_metric, 'metric not finite')
+        return mean_mi_metric
+
+
+    def loss(self, y_true, y_pred):
+        """ loss is negative MI """
+
+        # compute dice, which will now be [batch_size, nb_labels]
+        mi_metric = self.mi(y_true, y_pred)
+
+        # loss
+        mi_loss = - mi_metric
+
+        # weigh the entries in the dice matrix:
+        if self.weights is not None:
+            mi_loss *= self.weights
+
+        # return one minus mean dice as loss
+        mean_mi_loss = K.mean(mi_loss)
+        tf.verify_tensor_all_finite(mean_mi_loss, 'Loss not finite')
+        return mean_mi_loss
+'''
 
 
 def diceLoss(y_true, y_pred):

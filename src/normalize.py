@@ -66,8 +66,7 @@ def normalize(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_e
     zz = np.arange(vol_size[2])
     grid = np.rollaxis(np.array(np.meshgrid(xx, yy, zz)), 0, 4)
 
-    feature_stats = {}
-    num_channels = 32
+    feature_stats = [{} for i in range(len(nf_enc))]
     percentiles = [0.1, 1, 5, 10, 90, 95, 99, 99.9]
 
     for step in range(0, n_test):
@@ -75,31 +74,35 @@ def normalize(model_name, iter_num, gpu_id, n_test, vol_size=(160,192,224), nf_e
         X_vol, X_seg = datagenerators.load_example_by_name(vol_name, seg_name)
 
         with tf.device(gpu):
-            output, enc = full_model.predict([X_vol])
+            enc_array = full_model.predict([X_vol])
+            output = enc_array[0]
 
-        # batch size is 1
-        mean = np.mean(enc, axis=(0, 1, 2, 3))
-        mean_keepdim = np.mean(enc, axis=(0, 1, 2, 3), keepdims=True)
-        var = np.mean(np.square(enc - mean_keepdim), axis=(0,1,2,3))
-        means = feature_stats.get('mean', [])
-        variances = feature_stats.get('var', [])
-        means.append(mean)
-        variances.append(var)
-        feature_stats['mean'] = means
-        feature_stats['var'] = variances
+        for i in range(len(nf_enc)):
+            enc = enc_array[i+1]
+            # batch size is 1
+            mean = np.mean(enc, axis=(0, 1, 2, 3))
+            mean_keepdim = np.mean(enc, axis=(0, 1, 2, 3), keepdims=True)
+            var = np.mean(np.square(enc - mean_keepdim), axis=(0,1,2,3))
+            means = feature_stats[i].get('mean', [])
+            variances = feature_stats[i].get('var', [])
+            means.append(mean)
+            variances.append(var)
+            feature_stats[i]['mean'] = means
+            feature_stats[i]['var'] = variances
 
-        for q in percentiles:
-            pc = np.percentile(enc, q, axis=(0,1,2,3))
-            lst = feature_stats.get(q, [])
-            lst.append(pc)
-            feature_stats[q] = lst
+            for q in percentiles:
+                pc = np.percentile(enc, q, axis=(0,1,2,3))
+                lst = feature_stats[i].get(q, [])
+                lst.append(pc)
+                feature_stats[i][q] = lst
         print(step)
 
-    for key, value in feature_stats.items():
-        if key == 'mean' or 'var':
-            feature_stats[key] = np.mean(np.array(value), axis=0)
-        else:
-            feature_stats[key] = np.median(np.array(value), axis=0)
+    for i in range(len(nf_enc)):
+        for key, value in feature_stats[i].items():
+            if key == 'mean' or 'var':
+                feature_stats[i][key] = np.mean(np.array(value), axis=0)
+            else:
+                feature_stats[i][key] = np.median(np.array(value), axis=0)
 
     print(feature_stats)
     with open('feature_stats.txt', 'wb') as file:

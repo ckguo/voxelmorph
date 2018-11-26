@@ -41,7 +41,7 @@ atlas = np.load('../data/atlas_norm.npz')
 atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, ac_coef, use_normalize, norm_percentile, reg_param, model_save_iter, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, feature_coef, norm_percentile, seg_path, reg_param, model_save_iter, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -84,14 +84,20 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
     autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
 
-    ac_weights = [0]*16
-    ac_weights[2] = 1
-    ac_weights[7] = 1
-    ac_weights[13] = 1
+    ac_weights = np.zeros(80)
+    good = [41, 62, 44, 45, 39, 35, 73, 78, 15, 71]
+    ac_weights[good] = 1
+
+    # for i in range(16):
+    #     ac_weights[i] = 1
+    if seg_path == None:
+        loss_function = losses.autoencoderLoss(autoencoder_path, autoencoder_num_downsample, ac_weights, feature_coef, mean_squared_error, norm_percentile)
+    else:
+        loss_function = losses.segNetworkLoss(seg_path, feature_coef=feature_coef, loss_function=mean_squared_error, percentile=norm_percentile)
 
     model = networks.unet(vol_size, nf_enc, nf_dec)
     model.compile(optimizer=Adam(lr=lr), 
-                  loss=[losses.autoencoderLoss(autoencoder_path, autoencoder_num_downsample, ac_weights, ac_coef, mean_squared_error, use_normalize, norm_percentile), losses.gradientLoss('l2')],
+                  loss=[loss_function, losses.gradientLoss('l2')],
                   loss_weights=[1.0, reg_param])
 
 
@@ -166,15 +172,15 @@ if __name__ == "__main__":
     parser.add_argument("--ac_num_downsample", type=int,
                         dest="autoencoder_num_downsample", default=3,
                         help="autoencoder number of downsample layers")
-    parser.add_argument("--ac_coef", type=float,
-                        dest="ac_coef", default=1,
-                        help="coefficient to weight autoencoder loss")
-    parser.add_argument('--normalize', dest='use_normalize', action='store_true')
-    parser.add_argument('--no-normalize', dest='use_normalize', action='store_false')
-    parser.set_defaults(use_normalize=False)
+    parser.add_argument("--feature_coef", type=float,
+                        dest="feature_coef", default=1,
+                        help="coefficient to weight feature loss")
     parser.add_argument("--norm_percentile", type=float,
                         dest="norm_percentile", default=None,
                         help="percentile used when normalizing")
+    parser.add_argument("--seg_path", type=str,
+                        dest="seg_path", default=None,
+                        help="seg model path")
     parser.add_argument("--lambda", type=float,
                         dest="reg_param", default=0.01,
                         help="regularization parameter")

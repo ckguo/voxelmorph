@@ -12,7 +12,7 @@ import sys
 # third party
 import numpy as np
 import keras.backend as K
-from keras.models import Model
+from keras.models import Model, load_model
 from keras.layers import Conv3D, Activation, Input, UpSampling3D, concatenate
 from keras.layers import LeakyReLU, Reshape, Lambda
 from keras.initializers import RandomNormal
@@ -40,13 +40,27 @@ def autoencoder(vol_size, enc_nf, dec_nf):
         x = UpSampling3D()(x)
     output = conv_block(x, 1)
 
-    full_model = Model(inputs=[src], outputs=[output, x_enc[1]])
+    full_model = Model(inputs=[src], outputs=[output] + x_enc[1:])
     train_model = Model(inputs=[src], outputs=[output])
 
     return full_model, train_model
     
+def segmenter_feature_model(seg_path):
+    model = load_model(seg_path, compile=False)
+    end_layer = 35 # layer 35 starts to upsample
+    layer_indices = [i for i in range(len(model.layers[:35])) if 'leaky_re_lu' in model.layers[i].name]
+    print('layer_indices', layer_indices)
+    feature_model = Model(inputs=model.inputs, outputs=[model.layers[i].output for i in layer_indices])
+    feature_model.trainable = False
+    print('input', feature_model.inputs)
 
-def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
+    num_features = [model.layers[i].output.shape.as_list()[-1] for i in layer_indices] #layer 35 starts to upsample
+    print('number of layers', len(num_features))
+    print('total number of features', sum(num_features))
+    return feature_model, num_features
+
+def unet_full(vol_size, enc_nf, dec_nf, full_size=True):
+
     """
     unet architecture for voxelmorph models presented in the CVPR 2018 paper. 
     You may need to modify this code (e.g., number of layers) to suit your project needs.
@@ -91,6 +105,14 @@ def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
     # optional convolution at output resolution (used in voxelmorph-2)
     if len(dec_nf) == 7:
         x = conv_block(x, dec_nf[6])
+
+    return Model(inputs=[src, tgt], outputs=[x] + x_enc[1:])
+
+def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
+    unet_model = unet_full(vol_size, enc_nf, dec_nf, full_size=True)
+
+    [src, tgt] = unet_model.inputs
+    x = unet_model.output[0]
 
     return Model(inputs=[src, tgt], outputs=[x])
 
@@ -150,23 +172,6 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
         model = Model(inputs=[src, tgt, src_seg], outputs=[y, flow, y_seg])
     return model
 
-def unets_autoencoder(vol_size, enc_nf, dec_nf, full_size=True):
-    unet = unet(vol_size, enc_nf, dec_nf, full_size=full_size)
-
-    [src, tgt] = unet.inputs
-    [y, flow] = unet.outputs
-
-    autoencoder = networks.autoencoder(vol_size, [16, 32, 32, 32], [32, 32, 32, 32])
-    autoencoder.load_weights(autoencoder_path)
-    autoencoder.trainable = False
-
-    a_y = autoencoder([y])
-    a_tgt = autoencoder([tgt])
-
-    full_model = Model(inputs=[src, tgt], outputs=[y, a_y, a_tgt, flow])
-    train_model = Model(inputs=[src, tgt], outputs=[a_y, a_tgt, flow])
-
-    return full_model, train_model
 
 def miccai2018_net(vol_size, enc_nf, dec_nf, use_miccai_int=True, int_steps=7, indexing='xy'):
     """
