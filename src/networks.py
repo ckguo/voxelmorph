@@ -153,8 +153,6 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
     flow = Conv3D(3, kernel_size=3, padding='same',
                   kernel_initializer=RandomNormal(mean=0.0, stddev=1e-5), name='flow')(x)
 
-    print('src', src)
-    print('flow', flow)
     # warp the source with the flow
     y = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([src, flow])
     # prepare model

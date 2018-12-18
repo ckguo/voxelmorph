@@ -41,7 +41,7 @@ atlas = np.load('../data/atlas_norm.npz')
 atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoencoder_iters, autoencoder_model, autoencoder_num_downsample, feature_coef, norm_percentile, num_bins, alpha, seg_path, reg_param, model_save_iter, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, max_clip, alpha, reg_param, model_save_iter, invert_images, crop_background, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -83,9 +83,8 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
     # in the experiments, we use image_2 as atlas
 
     # autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
-
-    bin_centers = np.linspace(0, 1, num_bins*2+1)[1::2]
-    loss_function = losses.mutualInformation(bin_centers)
+    bin_centers = np.linspace(0, max_clip, num_bins*2+1)[1::2]
+    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, crop_background=crop_background)
 
     model = networks.unet(vol_size, nf_enc, nf_dec)
     model.compile(optimizer=Adam(lr=lr), 
@@ -94,7 +93,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
     print('inputs', model.inputs)
     # if you'd like to initialize the data, you can do it here:
-    if pretrained_path != None:
+    if pretrained_path != None and pretrained_path != '':
         model.load_weights(pretrained_path)
 
     # prepare data for training
@@ -107,6 +106,8 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, autoenco
 
         # get data
         X = next(train_example_gen)[0]
+        if invert_images:
+            X = max_clip - X
 
         # train
         train_loss = model.train_on_batch([X, atlas_vol], [atlas_vol, zero_flow])
@@ -153,31 +154,16 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float,
                         dest="lr", default=1e-4, help="learning rate")
     parser.add_argument("--iters", type=int,
-                        dest="n_iterations", default=150000,
+                        dest="n_iterations", default=400000,
                         help="number of iterations")
-    parser.add_argument("--ac_iters", type=int,
-                        dest="autoencoder_iters", default=135400,
-                        help="autoencoder number of iterations")
-    parser.add_argument("--ac_model", type=str,
-                        dest="autoencoder_model", default='autoencoder_3',
-                        help="autoencoder model name")
-    parser.add_argument("--ac_num_downsample", type=int,
-                        dest="autoencoder_num_downsample", default=3,
-                        help="autoencoder number of downsample layers")
-    parser.add_argument("--feature_coef", type=float,
-                        dest="feature_coef", default=1,
-                        help="coefficient to weight feature loss")
-    parser.add_argument("--norm_percentile", type=float,
-                        dest="norm_percentile", default=None,
-                        help="percentile used when normalizing")
-    parser.add_argument("--seg_path", type=str,
-                        dest="seg_path", default=None,
-                        help="seg model path")
     parser.add_argument("--num_bins", type=int,
-                        dest="num_bins", default=16,
+                        dest="num_bins", default=32,
                         help="number of bins when calculating mutual information")
+    parser.add_argument("--max_clip", type=float,
+                        dest="max_clip", default=0.7,
+                        help="maximum input value to calculate bins")
     parser.add_argument("--lambda", type=float,
-                        dest="reg_param", default=0.01,
+                        dest="reg_param", default=1.0,
                         help="regularization parameter")
     parser.add_argument("--alpha", type=float,
                         dest="alpha", default=1.0,
@@ -188,6 +174,10 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str,
                         dest="model_name", default='autoencoder_cost',
                         help="models folder")
+    parser.add_argument("--invert_images", dest="invert_images", action="store_true")
+    parser.set_defaults(invert_images=False)
+    parser.add_argument("--crop_background", dest="crop_background", action="store_true")
+    parser.set_defaults(crop_background=False)
 
     args = parser.parse_args()
     train(**vars(args))

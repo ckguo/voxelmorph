@@ -123,40 +123,13 @@ def segNetworkLoss(seg_path, feature_coef=1, loss_function=None, feature_weights
 def mutualInformation(bin_centers,
                       sigma=None,    # sigma for soft MI. If not provided, it will be half of a bin length
                       weights=None,  # optional weights, size [1, nb_labels]
-                      vox_weights=None):
+                      vox_weights=None,
+                      max_clip=1,
+                      crop_background=False):
     """
     Mutual Information for image-image pairs
 
-    This function is particular to my current setup (hence the sandbox), it assumes
-    that y_true and y_pred are both (batch_sizexheightxwidthxdepthxchan)
-
-        
-    # some interactive tests with keras' K.eval
-    yp = np.random.random((3, 160, 190, 5))
-    yp = yp / np.sum(yp, 3, keepdims=True)
-    y_pred = K.variable(yp)
-    y_true = K.variable(np.random.random((3, 160, 190, 1)))
-    
-    nb_bins = 3
-    bin_centers = np.linspace(0, 1, nb_bins*2+1)[1::2]
-    
-    print("mi:", K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[0]))
-    
-    ps = K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[1])
-    print("ps:", ps, np.sum(ps))
-    
-    pi = K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[2])
-    print("pi:", pi, np.sum(pi))
-    
-    psi = K.eval(MutualInformation(bin_centers).mi(y_true, y_pred)[3])
-    print("psi")
-    print(psi)
-    
-    print("psi_s")
-    print(np.sum(psi, 1)[0:5])
-    
-    print("psi_i")
-    print(np.sum(psi, 0))
+    This function assumes that y_true and y_pred are both (batch_sizexheightxwidthxdepthxchan)
         
     """
 
@@ -172,12 +145,25 @@ def mutualInformation(bin_centers,
 
     def mi(y_true, y_pred):
         """ soft mutual info """
+        y_pred = K.clip(y_pred, 0, max_clip)
+        y_true = K.clip(y_true, 0, max_clip)
 
-        # reshape: flatten images into shape (batch_size, heightxwidthxdepthxchan, 1)
-        y_true = K.reshape(y_true, (-1, K.prod(K.shape(y_true)[1:])))
-        y_true = K.expand_dims(y_true, 2)
-        y_pred = K.reshape(y_pred, (-1, K.prod(K.shape(y_pred)[1:])))
-        y_pred = K.expand_dims(y_pred, 2)
+        if crop_background:
+            # does not support variable batch size
+            thresh = 0.0001
+            # mask = (y_true > 0.0001) or (y_pred > 0.0001)
+            mask = K.any(K.stack([y_true > thresh, y_pred > thresh], axis=0), axis=0)
+            y_pred = tf.boolean_mask(y_pred, mask)
+            y_true = tf.boolean_mask(y_true, mask)
+            y_pred = K.expand_dims(K.expand_dims(y_pred, 0), 2)
+            y_true = K.expand_dims(K.expand_dims(y_true, 0), 2)
+
+        else:
+            # reshape: flatten images into shape (batch_size, heightxwidthxdepthxchan, 1)
+            y_true = K.reshape(y_true, (-1, K.prod(K.shape(y_true)[1:])))
+            y_true = K.expand_dims(y_true, 2)
+            y_pred = K.reshape(y_pred, (-1, K.prod(K.shape(y_pred)[1:])))
+            y_pred = K.expand_dims(y_pred, 2)
         
         nb_voxels = tf.cast(K.shape(y_pred)[1], tf.float32)
 
@@ -254,6 +240,17 @@ def diceLoss(y_true, y_pred):
     dice = tf.reduce_mean(top/bottom)
     return -dice
 
+
+def kdice(vol1, vol2, labels):
+    dicem = [None] * len(labels)
+    for idx, lab in enumerate(labels):
+        vol1l = tf.cast(tf.equal(vol1, lab), 'float32')
+        vol2l = tf.cast(tf.equal(vol2, lab), 'float32')
+        top = 2 * K.sum(vol1l * vol2l)
+        bottom = K.sum(vol1l) + K.sum(vol2l)
+        bottom = K.maximum(bottom, np.finfo(float).eps)  # add epsilon.
+        dicem[idx] = top / bottom
+    return tf.stack(dicem)
 
 def gradientLoss(penalty='l1'):
     def loss(y_true, y_pred):
