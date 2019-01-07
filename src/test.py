@@ -12,12 +12,14 @@ from scipy.interpolate import interpn
 from restrict import restrict_GPU_tf, restrict_GPU_keras
 import time
 from argparse import ArgumentParser
-import keras.backend as K
+
 
 # project
+sys.path.append('../ext/medipy-lib')
+import medipy
 import networks
+from medipy.metrics import dice
 import datagenerators
-import losses
 
 # Test file and anatomical labels we want to evaluate
 test_brain_file = open('val_files.txt')
@@ -64,16 +66,13 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
         net.load_weights('../models/' + model_name +
                          '/' + str(iter_num) + '.h5')
 
+    xx = np.arange(vol_size[1])
+    yy = np.arange(vol_size[0])
+    zz = np.arange(vol_size[2])
+    grid = np.rollaxis(np.array(np.meshgrid(xx, yy, zz)), 0, 4)
+
     dice_means = []
     dice_stds = []
-
-    sz = atlas_seg.shape
-    z_inp1 = tf.placeholder(tf.float32, sz)
-    z_inp2 = tf.placeholder(tf.float32, sz)
-    z_out = losses.kdice(z_inp1, z_inp2, labels)
-    kdice_fn = K.function([z_inp1, z_inp2], [z_out])
-
-    nn_trf_model = networks.nn_trf(vol_size)
 
     for step in range(0, n_test):
 
@@ -89,9 +88,14 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
 
         with tf.device(gpu):
             pred = net.predict([X_vol, atlas_vol])
-            warp_seg = nn_trf_model.predict([X_seg, pred[1]])
-            vals = kdice_fn([warp_seg[0,:,:,:,0], atlas_seg])
 
+        # Warp segments with flow
+        flow = pred[1][0, :, :, :, :]
+        sample = flow+grid
+        sample = np.stack((sample[:, :, :, 1], sample[:, :, :, 0], sample[:, :, :, 2]), 3)
+        warp_seg = interpn((yy, xx, zz), X_seg[0, :, :, :, 0], sample, method='nearest', bounds_error=False, fill_value=0)
+
+        vals, _ = dice(warp_seg, atlas_seg, labels=labels, nargout=2)
         # print(np.mean(vals), np.std(vals))
         mean = np.mean(vals)
         std = np.std(vals)

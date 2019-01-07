@@ -151,8 +151,12 @@ def mutualInformation(bin_centers,
         if crop_background:
             # does not support variable batch size
             thresh = 0.0001
-            # mask = (y_true > 0.0001) or (y_pred > 0.0001)
-            mask = K.any(K.stack([y_true > thresh, y_pred > thresh], axis=0), axis=0)
+            padding_size = 10
+            filt = tf.ones([padding_size, padding_size, padding_size, 1, 1])
+
+            smooth = tf.nn.conv3d(y_true, filt, [1, 1, 1, 1, 1], "SAME")
+            mask = smooth > thresh
+            # mask = K.any(K.stack([y_true > thresh, y_pred > thresh], axis=0), axis=0)
             y_pred = tf.boolean_mask(y_pred, mask)
             y_true = tf.boolean_mask(y_true, mask)
             y_pred = K.expand_dims(K.expand_dims(y_pred, 0), 2)

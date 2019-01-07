@@ -157,7 +157,7 @@ if __name__ == "__main__":
                         dest="n_iterations", default=400000,
                         help="number of iterations")
     parser.add_argument("--num_bins", type=int,
-                        dest="num_bins", default=32,
+                        dest="num_bins", default=48,
                         help="number of bins when calculating mutual information")
     parser.add_argument("--max_clip", type=float,
                         dest="max_clip", default=0.7,
