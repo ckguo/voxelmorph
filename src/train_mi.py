@@ -8,6 +8,7 @@ import glob
 import sys
 import random
 from argparse import ArgumentParser
+import time
 
 # third-party imports
 import tensorflow as tf
@@ -41,7 +42,7 @@ atlas = np.load('../data/atlas_norm.npz')
 atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, max_clip, alpha, reg_param, model_save_iter, invert_images, crop_background, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, patch_size, max_clip, alpha, reg_param, model_save_iter, invert_images, crop_background, local_mi, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -53,6 +54,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
     :param model_save_iter: frequency with which to save models
     :param batch_size: Optional, default of 1. can be larger, depends on GPU memory and volume size
     """
+    start_time = time.time()
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
     restrict_GPU_tf(str(gpu_id))
@@ -84,7 +86,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
 
     # autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
     bin_centers = np.linspace(0, max_clip, num_bins*2+1)[1::2]
-    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, crop_background=crop_background)
+    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, crop_background=crop_background, local_mi=local_mi, patch_size=patch_size)
 
     model = networks.unet(vol_size, nf_enc, nf_dec)
     model.compile(optimizer=Adam(lr=lr), 
@@ -111,6 +113,10 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
 
         # train
         train_loss = model.train_on_batch([X, atlas_vol], [atlas_vol, zero_flow])
+
+        if step == 0:
+            print('first step took', time.time() - start_time, 'seconds')
+
         if not isinstance(train_loss, list):
             train_loss = [train_loss]
 
@@ -159,6 +165,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_bins", type=int,
                         dest="num_bins", default=48,
                         help="number of bins when calculating mutual information")
+    parser.add_argument("--patch_size", type=int,
+                        dest="patch_size", default=10,
+                        help="patch size when doing local MI")
     parser.add_argument("--max_clip", type=float,
                         dest="max_clip", default=0.7,
                         help="maximum input value to calculate bins")
@@ -178,6 +187,7 @@ if __name__ == "__main__":
     parser.set_defaults(invert_images=False)
     parser.add_argument("--crop_background", dest="crop_background", action="store_true")
     parser.set_defaults(crop_background=False)
-
+    parser.add_argument("--local_mi", dest="local_mi", action="store_true")
+    parser.set_defaults(local_mi=False)
     args = parser.parse_args()
     train(**vars(args))

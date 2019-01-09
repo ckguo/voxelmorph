@@ -47,6 +47,9 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
     print(gpu)
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
+    restrict_GPU_tf(str(gpu_id))
+    restrict_GPU_keras(str(gpu_id))
+
     # Anatomical labels we want to evaluate
     labels = sio.loadmat('../data/labels.mat')['labels'][0]
 

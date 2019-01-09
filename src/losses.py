@@ -125,7 +125,9 @@ def mutualInformation(bin_centers,
                       weights=None,  # optional weights, size [1, nb_labels]
                       vox_weights=None,
                       max_clip=1,
-                      crop_background=False):
+                      crop_background=False, # crop_background should never be true if local_mi is True
+                      local_mi=False,
+                      patch_size=5):
     """
     Mutual Information for image-image pairs
 
@@ -135,6 +137,7 @@ def mutualInformation(bin_centers,
 
     """ prepare MI. """
     vol_bin_centers = K.variable(bin_centers)
+    num_bins = len(bin_centers)
     weights = None if weights is None else K.variable(weights)
     vox_weights = None if vox_weights is None else K.variable(vox_weights)
     sigma = sigma
@@ -142,6 +145,18 @@ def mutualInformation(bin_centers,
     if sigma is None:
         sigma = np.mean(np.diff(bin_centers)/2)
     preterm = K.variable(1 / (2 * np.square(sigma)))
+
+    if local_mi:
+        filter_idx = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
+        for i in range(patch_size):
+            for j in range(patch_size):
+                for k in range(patch_size):
+                    filter_idx[i,j,k,:,(patch_size**2)*i + patch_size*j + k, :] = 1
+        filter_bin = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
+        for i in range(num_bins):
+            filter_bin[:, :, :, i, :, i] = 1
+        filt = np.reshape(filter_idx * filter_bin, (patch_size, patch_size, patch_size, num_bins, (patch_size**3) * num_bins))
+        filt = tf.constant(filt)
 
     def mi(y_true, y_pred):
         """ soft mutual info """
@@ -151,7 +166,7 @@ def mutualInformation(bin_centers,
         if crop_background:
             # does not support variable batch size
             thresh = 0.0001
-            padding_size = 10
+            padding_size = 20
             filt = tf.ones([padding_size, padding_size, padding_size, 1, 1])
 
             smooth = tf.nn.conv3d(y_true, filt, [1, 1, 1, 1, 1], "SAME")
@@ -192,11 +207,47 @@ def mutualInformation(bin_centers,
         papb = K.batch_dot(K.permute_dimensions(pa, (0,2,1)), pb) + K.epsilon()
         mi = K.sum(K.sum(pab * K.log(pab/papb + K.epsilon()), 1), 1)
 
+        return mi
+
+    def local_mi(y_true, y_pred):
+        y_pred = K.clip(y_pred, 0, max_clip)
+        y_true = K.clip(y_true, 0, max_clip)
+
+        # reshape bin centers to be (1, 1, B)
+        o = [1, 1, 1, 1, num_bins]
+        vbc = K.reshape(vol_bin_centers, o)
+        
+        # compute image terms
+        # num channels of y_true and y_pred must be 1
+        I_a = K.exp(- preterm * K.square(y_true  - vbc))
+        I_a /= K.sum(I_a, -1, keepdims=True)
+
+        I_b = K.exp(- preterm * K.square(y_pred  - vbc))
+        I_b /= K.sum(I_b, -1, keepdims=True)
+
+        I_a_patch = tf.reshape(tf.nn.conv3d(I_a, filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
+        I_b_patch = tf.reshape(tf.nn.conv3d(I_b, filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
+
+        print('iapatch dim', I_a_patch.shape)
+        # compute probabilities
+        I_a_permute = K.permute_dimensions(I_a_patch, (0,2,1))
+        pab = K.batch_dot(I_a_permute, I_b_patch)  # should be the right size now, nb_labels x nb_bins
+        pab /= patch_size**3
+        pa = tf.reduce_mean(I_a_patch, 1, keep_dims=True)
+        pb = tf.reduce_mean(I_b_patch, 1, keep_dims=True)
+        
+        papb = K.batch_dot(K.permute_dimensions(pa, (0,2,1)), pb) + K.epsilon()
+        print('papb shape', papb.shape)
+        mi = K.mean(K.sum(K.sum(pab * K.log(pab/papb + K.epsilon()), 1), 1))
+
         print('mi', mi)
         return mi
 
     def loss(y_true, y_pred):
-        return -mi(y_true, y_pred)
+        if local_mi:
+            return -local_mi(y_true, y_pred)
+        else:
+            return -mi(y_true, y_pred)
 
     return loss
 '''
