@@ -166,7 +166,7 @@ if __name__ == "__main__":
                         dest="num_bins", default=48,
                         help="number of bins when calculating mutual information")
     parser.add_argument("--patch_size", type=int,
-                        dest="patch_size", default=10,
+                        dest="patch_size", default=1,
                         help="patch size when doing local MI")
     parser.add_argument("--max_clip", type=float,
                         dest="max_clip", default=0.7,

@@ -122,12 +122,20 @@ def segNetworkLoss(seg_path, feature_coef=1, loss_function=None, feature_weights
 
 def mutualInformation(bin_centers,
                       sigma=None,    # sigma for soft MI. If not provided, it will be half of a bin length
-                      weights=None,  # optional weights, size [1, nb_labels]
-                      vox_weights=None,
                       max_clip=1,
                       crop_background=False, # crop_background should never be true if local_mi is True
                       local_mi=False,
-                      patch_size=5):
+                      patch_size=1):
+    if local_mi:
+        return localMutualInformation(bin_centers, sigma, max_clip, patch_size)
+    else:
+        return globalMutualInformation(bin_centers, sigma, max_clip, crop_background)
+
+
+def globalMutualInformation(bin_centers,
+                      sigma=None,
+                      max_clip=1,
+                      crop_background=False):
     """
     Mutual Information for image-image pairs
 
@@ -138,25 +146,11 @@ def mutualInformation(bin_centers,
     """ prepare MI. """
     vol_bin_centers = K.variable(bin_centers)
     num_bins = len(bin_centers)
-    weights = None if weights is None else K.variable(weights)
-    vox_weights = None if vox_weights is None else K.variable(vox_weights)
     sigma = sigma
     
     if sigma is None:
         sigma = np.mean(np.diff(bin_centers)/2)
     preterm = K.variable(1 / (2 * np.square(sigma)))
-
-    if local_mi:
-        filter_idx = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
-        for i in range(patch_size):
-            for j in range(patch_size):
-                for k in range(patch_size):
-                    filter_idx[i,j,k,:,(patch_size**2)*i + patch_size*j + k, :] = 1
-        filter_bin = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
-        for i in range(num_bins):
-            filter_bin[:, :, :, i, :, i] = 1
-        filt = np.reshape(filter_idx * filter_bin, (patch_size, patch_size, patch_size, num_bins, (patch_size**3) * num_bins))
-        filt = tf.constant(filt)
 
     def mi(y_true, y_pred):
         """ soft mutual info """
@@ -209,6 +203,44 @@ def mutualInformation(bin_centers,
 
         return mi
 
+    def loss(y_true, y_pred):
+        return -mi(y_true, y_pred)
+
+    return loss
+
+def localMutualInformation(bin_centers,
+                      sigma=None,
+                      max_clip=1,
+                      patch_size=1):
+    """
+    Mutual Information for image-image pairs
+
+    This function assumes that y_true and y_pred are both (batch_sizexheightxwidthxdepthxchan)
+        
+    """
+
+    """ prepare MI. """
+    vol_bin_centers = K.variable(bin_centers)
+    num_bins = len(bin_centers)
+    sigma = sigma
+    
+    if sigma is None:
+        sigma = np.mean(np.diff(bin_centers)/2)
+    preterm = K.variable(1 / (2 * np.square(sigma)))
+
+    filter_idx = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
+    for i in range(patch_size):
+        for j in range(patch_size):
+            for k in range(patch_size):
+                filter_idx[i,j,k,:,(patch_size**2)*i + patch_size*j + k, :] = 1
+    filter_bin = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
+    for i in range(num_bins):
+        filter_bin[:, :, :, i, :, i] = 1
+    local_filt = np.reshape(filter_idx * filter_bin, (patch_size, patch_size, patch_size, num_bins, (patch_size**3) * num_bins))
+    local_filt = tf.constant(local_filt)
+    del filter_idx, filter_bin
+
+
     def local_mi(y_true, y_pred):
         y_pred = K.clip(y_pred, 0, max_clip)
         y_true = K.clip(y_true, 0, max_clip)
@@ -225,8 +257,8 @@ def mutualInformation(bin_centers,
         I_b = K.exp(- preterm * K.square(y_pred  - vbc))
         I_b /= K.sum(I_b, -1, keepdims=True)
 
-        I_a_patch = tf.reshape(tf.nn.conv3d(I_a, filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
-        I_b_patch = tf.reshape(tf.nn.conv3d(I_b, filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
+        I_a_patch = tf.reshape(tf.nn.conv3d(I_a, local_filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
+        I_b_patch = tf.reshape(tf.nn.conv3d(I_b, local_filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
 
         print('iapatch dim', I_a_patch.shape)
         # compute probabilities
@@ -244,49 +276,9 @@ def mutualInformation(bin_centers,
         return mi
 
     def loss(y_true, y_pred):
-        if local_mi:
-            return -local_mi(y_true, y_pred)
-        else:
-            return -mi(y_true, y_pred)
+        return -local_mi(y_true, y_pred)
 
     return loss
-'''
-    def mean_mi(self, y_true, y_pred):
-        """ weighted mean mi across all patches and labels """
-
-        # compute dice, which will now be [batch_size, nb_labels]
-        mi_metric = self.mi(y_true, y_pred)
-
-        # weigh the entries in the dice matrix:
-        if self.weights is not None:
-            mi_metric *= self.weights
-        if self.vox_weights is not None:
-            mi_metric *= self.vox_weights
-
-        # return one minus mean dice as loss
-        mean_mi_metric = K.mean(mi_metric)
-        tf.verify_tensor_all_finite(mean_mi_metric, 'metric not finite')
-        return mean_mi_metric
-
-
-    def loss(self, y_true, y_pred):
-        """ loss is negative MI """
-
-        # compute dice, which will now be [batch_size, nb_labels]
-        mi_metric = self.mi(y_true, y_pred)
-
-        # loss
-        mi_loss = - mi_metric
-
-        # weigh the entries in the dice matrix:
-        if self.weights is not None:
-            mi_loss *= self.weights
-
-        # return one minus mean dice as loss
-        mean_mi_loss = K.mean(mi_loss)
-        tf.verify_tensor_all_finite(mean_mi_loss, 'Loss not finite')
-        return mean_mi_loss
-'''
 
 
 def diceLoss(y_true, y_pred):
