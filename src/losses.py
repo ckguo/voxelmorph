@@ -228,19 +228,6 @@ def localMutualInformation(bin_centers,
         sigma = np.mean(np.diff(bin_centers)/2)
     preterm = K.variable(1 / (2 * np.square(sigma)))
 
-    filter_idx = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
-    for i in range(patch_size):
-        for j in range(patch_size):
-            for k in range(patch_size):
-                filter_idx[i,j,k,:,(patch_size**2)*i + patch_size*j + k, :] = 1
-    filter_bin = np.zeros([patch_size, patch_size, patch_size, num_bins, patch_size**3, num_bins], dtype=np.float32)
-    for i in range(num_bins):
-        filter_bin[:, :, :, i, :, i] = 1
-    local_filt = np.reshape(filter_idx * filter_bin, (patch_size, patch_size, patch_size, num_bins, (patch_size**3) * num_bins))
-    local_filt = tf.constant(local_filt)
-    del filter_idx, filter_bin
-
-
     def local_mi(y_true, y_pred):
         y_pred = K.clip(y_pred, 0, max_clip)
         y_true = K.clip(y_true, 0, max_clip)
@@ -257,10 +244,15 @@ def localMutualInformation(bin_centers,
         I_b = K.exp(- preterm * K.square(y_pred  - vbc))
         I_b /= K.sum(I_b, -1, keepdims=True)
 
-        I_a_patch = tf.reshape(tf.nn.conv3d(I_a, local_filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
-        I_b_patch = tf.reshape(tf.nn.conv3d(I_b, local_filt, [1, patch_size, patch_size, patch_size, 1], "SAME"), (-1, patch_size**3, num_bins))
+        x, y, z = vol_size
+        I_a_patch = tf.reshape(I_a, [x//patch_size, patch_size, y//patch_size, patch_size, z//patch_size, patch_size, num_bins])
+        I_a_patch = tf.transpose(I_a_patch, [0, 2, 4, 1, 3, 5, 6])
+        I_a_patch = tf.reshape(I_a_patch, [-1, patch_size**3, num_bins])
 
-        print('iapatch dim', I_a_patch.shape)
+        I_b_patch = tf.reshape(I_b, [x//patch_size, patch_size, y//patch_size, patch_size, z//patch_size, patch_size, num_bins])
+        I_b_patch = tf.transpose(I_b_patch, [0, 2, 4, 1, 3, 5, 6])
+        I_b_patch = tf.reshape(I_b_patch, [-1, patch_size**3, num_bins])
+
         # compute probabilities
         I_a_permute = K.permute_dimensions(I_a_patch, (0,2,1))
         pab = K.batch_dot(I_a_permute, I_b_patch)  # should be the right size now, nb_labels x nb_bins
@@ -269,10 +261,8 @@ def localMutualInformation(bin_centers,
         pb = tf.reduce_mean(I_b_patch, 1, keep_dims=True)
         
         papb = K.batch_dot(K.permute_dimensions(pa, (0,2,1)), pb) + K.epsilon()
-        print('papb shape', papb.shape)
         mi = K.mean(K.sum(K.sum(pab * K.log(pab/papb + K.epsilon()), 1), 1))
 
-        print('mi', mi)
         return mi
 
     def loss(y_true, y_pred):
