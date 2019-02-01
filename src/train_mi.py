@@ -17,6 +17,7 @@ from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
 from keras.losses import mean_squared_error
+import nibabel as nib
 
 # project imports
 import datagenerators
@@ -38,8 +39,10 @@ train_vol_names = glob.glob(base_data_dir + 'train/vols/*.npz')
 random.shuffle(train_vol_names)  # shuffle volume list
 
 # load atlas from provided files. This atlas is 160x192x224.
-atlas = np.load('../data/atlas_norm.npz')
-atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
+# atlas = np.load('../data/atlas_norm.npz')
+# atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
+
+atlas_vol = nib.load('../t2_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
 
 
 def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, patch_size, max_clip, alpha, reg_param, model_save_iter, invert_images, crop_background, local_mi, batch_size=1):

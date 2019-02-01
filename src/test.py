@@ -12,7 +12,7 @@ from scipy.interpolate import interpn
 from restrict import restrict_GPU_tf, restrict_GPU_keras
 import time
 from argparse import ArgumentParser
-
+import nibabel as nib
 
 # project
 sys.path.append('../ext/medipy-lib')
@@ -53,10 +53,13 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
     # Anatomical labels we want to evaluate
     labels = sio.loadmat('../data/labels.mat')['labels'][0]
 
-    atlas = np.load('../data/atlas_norm.npz')
-    atlas_vol = atlas['vol']
-    atlas_seg = atlas['seg']
-    atlas_vol = np.reshape(atlas_vol, (1,)+atlas_vol.shape+(1,))
+    # atlas = np.load('../data/atlas_norm.npz')
+    # atlas_vol = atlas['vol']
+    # atlas_seg = atlas['seg']
+    # atlas_vol = np.reshape(atlas_vol, (1,)+atlas_vol.shape+(1,))
+
+    atlas_vol = nib.load('../t2_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
+    atlas_seg = nib.load('../t2_atlas_seg.nii').get_data()
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
