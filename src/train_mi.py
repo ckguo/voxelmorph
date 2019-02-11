@@ -42,7 +42,7 @@ random.shuffle(train_vol_names)  # shuffle volume list
 # atlas = np.load('../data/atlas_norm.npz')
 # atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
 
-atlas_vol = nib.load('../t2_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
+atlas_vol = nib.load('../t2_atlas_warped.nii').get_data()[np.newaxis,...,np.newaxis]
 
 
 def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, patch_size, max_clip, alpha, reg_param, model_save_iter, invert_images, crop_background, local_mi, batch_size=1):

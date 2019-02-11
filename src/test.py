@@ -58,8 +58,8 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
     # atlas_seg = atlas['seg']
     # atlas_vol = np.reshape(atlas_vol, (1,)+atlas_vol.shape+(1,))
 
-    atlas_vol = nib.load('../t2_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
-    atlas_seg = nib.load('../t2_atlas_seg.nii').get_data()
+    atlas_vol = nib.load('../t2_atlas_warped.nii').get_data()[np.newaxis,...,np.newaxis]
+    atlas_seg = nib.load('../t2_atlas_seg_warped.nii').get_data()
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
