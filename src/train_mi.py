@@ -105,6 +105,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
     train_example_gen = datagenerators.example_gen(train_vol_names)
     zero_flow = np.zeros([batch_size, *vol_size, 3])
 
+    normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
     # train. Note: we use train_on_batch and design out own print function as this has enabled 
     # faster development and debugging, but one could also use fit_generator and Keras callbacks.
     for step in range(0, n_iterations):
@@ -115,7 +116,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
             X = max_clip - X
 
         # train
-        train_loss = model.train_on_batch([X, atlas_vol], [atlas_vol, zero_flow])
+        train_loss = model.train_on_batch([X, normalized_atlas_vol], [normalized_atlas_vol, zero_flow])
 
         if step == 0:
             print('first step took', time.time() - start_time, 'seconds')

@@ -155,7 +155,7 @@ def globalMutualInformation(bin_centers,
     def mi(y_true, y_pred):
         """ soft mutual info """
         y_pred = K.clip(y_pred, 0, max_clip)
-        y_true = K.clip(y_true / K.max(y_true) * max_clip, 0, max_clip) # normalize y_true to be from 0 to max_clip
+        y_true = K.clip(y_true, 0, max_clip)
 
         if crop_background:
             # does not support variable batch size
@@ -230,7 +230,7 @@ def localMutualInformation(bin_centers,
 
     def local_mi(y_true, y_pred):
         y_pred = K.clip(y_pred, 0, max_clip)
-        y_true = K.clip(y_true / K.max(y_true) * max_clip, 0, max_clip) # normalize y_true to be from 0 to max_clip
+        y_true = K.clip(y_true, 0, max_clip)
 
         # reshape bin centers to be (1, 1, B)
         o = [1, 1, 1, 1, num_bins]
