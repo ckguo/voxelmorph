@@ -84,7 +84,8 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
 
         # get data
         if n_test == 1:
-            X_vol, X_seg = datagenerators.load_example_by_name('../t1_atlas.nii', '../t1_atlas_seg.nii')
+            X_vol = nib.load('../t1_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
+            X_seg = nib.load('../t1_atlas_seg.nii').get_data()[np.newaxis,...,np.newaxis]
         else:
             vol_name, seg_name = test_brain_strings[step].split(",")
             X_vol, X_seg = datagenerators.load_example_by_name(vol_name, seg_name)
