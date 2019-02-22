@@ -61,6 +61,8 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
     atlas_vol = nib.load('../t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
     atlas_seg = nib.load('../t2_atlas_seg_027_S_2219.nii').get_data()
 
+    normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
+
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
@@ -94,7 +96,7 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
             X_vol = max_clip - X_vol
 
         with tf.device(gpu):
-            pred = net.predict([X_vol, atlas_vol])
+            pred = net.predict([X_vol, normalized_atlas_vol])
 
         # Warp segments with flow
         flow = pred[1][0, :, :, :, :]
