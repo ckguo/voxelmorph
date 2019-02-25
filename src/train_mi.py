@@ -45,7 +45,7 @@ random.shuffle(train_vol_names)  # shuffle volume list
 atlas_vol = nib.load('../t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, patch_size, max_clip, alpha, reg_param, model_save_iter, invert_images, crop_background, local_mi, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, patch_size, max_clip, reg_param, model_save_iter, invert_images, crop_background, local_mi, sigma_ratio, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -89,12 +89,12 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
 
     # autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
     bin_centers = np.linspace(0, max_clip, num_bins*2+1)[1::2]
-    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, crop_background=crop_background, local_mi=local_mi, patch_size=patch_size)
+    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, crop_background=crop_background, local_mi=local_mi, patch_size=patch_size, sigma_ratio=sigma_ratio)
 
     model = networks.unet(vol_size, nf_enc, nf_dec)
     model.compile(optimizer=Adam(lr=lr), 
                   loss=[loss_function, losses.gradientLoss('l2')],
-                  loss_weights=[alpha, reg_param])
+                  loss_weights=[1, reg_param])
 
     print('inputs', model.inputs)
     # if you'd like to initialize the data, you can do it here:
@@ -178,15 +178,15 @@ if __name__ == "__main__":
     parser.add_argument("--lambda", type=float,
                         dest="reg_param", default=1.0,
                         help="regularization parameter")
-    parser.add_argument("--alpha", type=float,
-                        dest="alpha", default=1.0,
-                        help="coeff of loss")
     parser.add_argument("--checkpoint_iter", type=int,
                         dest="model_save_iter", default=100,
                         help="frequency of model saves")
     parser.add_argument("--model_name", type=str,
                         dest="model_name", default='autoencoder_cost',
                         help="models folder")
+    parser.add_argument("--sigma_ratio", type=float,
+                        dest="sigma_ratio", default=0.5,
+                        help="sigma to bin width ratio in MI")
     parser.add_argument("--invert_images", dest="invert_images", action="store_true")
     parser.set_defaults(invert_images=False)
     parser.add_argument("--crop_background", dest="crop_background", action="store_true")

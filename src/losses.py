@@ -121,19 +121,19 @@ def segNetworkLoss(seg_path, feature_coef=1, loss_function=None, feature_weights
 
 
 def mutualInformation(bin_centers,
-                      sigma=None,    # sigma for soft MI. If not provided, it will be half of a bin length
+                      sigma_ratio=0.5,    # sigma for soft MI. If not provided, it will be half of a bin length
                       max_clip=1,
                       crop_background=False, # crop_background should never be true if local_mi is True
                       local_mi=False,
                       patch_size=1):
     if local_mi:
-        return localMutualInformation(bin_centers, sigma, max_clip, patch_size)
+        return localMutualInformation(bin_centers, sigma_ratio, max_clip, patch_size)
     else:
-        return globalMutualInformation(bin_centers, sigma, max_clip, crop_background)
+        return globalMutualInformation(bin_centers, sigma_ratio, max_clip, crop_background)
 
 
 def globalMutualInformation(bin_centers,
-                      sigma=None,
+                      sigma_ratio=0.5,
                       max_clip=1,
                       crop_background=False):
     """
@@ -146,10 +146,8 @@ def globalMutualInformation(bin_centers,
     """ prepare MI. """
     vol_bin_centers = K.variable(bin_centers)
     num_bins = len(bin_centers)
-    sigma = sigma
-    
-    if sigma is None:
-        sigma = np.mean(np.diff(bin_centers)/2)
+    sigma = np.mean(np.diff(bin_centers))*sigma_ratio
+
     preterm = K.variable(1 / (2 * np.square(sigma)))
 
     def mi(y_true, y_pred):
@@ -209,7 +207,7 @@ def globalMutualInformation(bin_centers,
     return loss
 
 def localMutualInformation(bin_centers,
-                      sigma=None,
+                      sigma_ratio=0.5,
                       max_clip=1,
                       patch_size=1):
     """
@@ -222,10 +220,8 @@ def localMutualInformation(bin_centers,
     """ prepare MI. """
     vol_bin_centers = K.variable(bin_centers)
     num_bins = len(bin_centers)
-    sigma = sigma
-    
-    if sigma is None:
-        sigma = np.mean(np.diff(bin_centers)/2)
+    sigma = np.mean(np.diff(bin_centers))*sigma_ratio
+
     preterm = K.variable(1 / (2 * np.square(sigma)))
 
     def local_mi(y_true, y_pred):
