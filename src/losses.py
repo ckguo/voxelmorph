@@ -232,20 +232,31 @@ def localMutualInformation(bin_centers,
         o = [1, 1, 1, 1, num_bins]
         vbc = K.reshape(vol_bin_centers, o)
         
+        # compute padding sizes
+        x, y, z = vol_size
+        x_r = -x % patch_size
+        y_r = -y % patch_size
+        z_r = -z % patch_size
+        pad_dims = [[0,0]]
+        pad_dims.append([x_r//2, x_r - x_r//2])
+        pad_dims.append([y_r//2, y_r - y_r//2])
+        pad_dims.append([z_r//2, z_r - z_r//2])
+        pad_dims.append([0,0])
+        padding = tf.constant(pad_dims)
+
         # compute image terms
         # num channels of y_true and y_pred must be 1
-        I_a = K.exp(- preterm * K.square(y_true  - vbc))
+        I_a = K.exp(- preterm * K.square(tf.pad(y_true, padding, 'CONSTANT')  - vbc))
         I_a /= K.sum(I_a, -1, keepdims=True)
 
-        I_b = K.exp(- preterm * K.square(y_pred  - vbc))
+        I_b = K.exp(- preterm * K.square(tf.pad(y_pred, padding, 'CONSTANT')  - vbc))
         I_b /= K.sum(I_b, -1, keepdims=True)
 
-        x, y, z = vol_size
-        I_a_patch = tf.reshape(I_a, [x//patch_size, patch_size, y//patch_size, patch_size, z//patch_size, patch_size, num_bins])
+        I_a_patch = tf.reshape(I_a, [(x+x_r)//patch_size, patch_size, (y+y_r)//patch_size, patch_size, (z+z_r)//patch_size, patch_size, num_bins])
         I_a_patch = tf.transpose(I_a_patch, [0, 2, 4, 1, 3, 5, 6])
         I_a_patch = tf.reshape(I_a_patch, [-1, patch_size**3, num_bins])
 
-        I_b_patch = tf.reshape(I_b, [x//patch_size, patch_size, y//patch_size, patch_size, z//patch_size, patch_size, num_bins])
+        I_b_patch = tf.reshape(I_b, [(x+x_r)//patch_size, patch_size, (y+y_r)//patch_size, patch_size, (z+z_r)//patch_size, patch_size, num_bins])
         I_b_patch = tf.transpose(I_b_patch, [0, 2, 4, 1, 3, 5, 6])
         I_b_patch = tf.reshape(I_b_patch, [-1, patch_size**3, num_bins])
 
