@@ -8,7 +8,6 @@ import glob
 import sys
 import random
 from argparse import ArgumentParser
-import time
 
 # third-party imports
 import tensorflow as tf
@@ -17,6 +16,7 @@ from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
 from keras.losses import mean_squared_error
+import scipy.io as sio
 import nibabel as nib
 
 # project imports
@@ -36,16 +36,14 @@ vol_size = (160, 192, 224)
 # and segmentations
 base_data_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/'
 train_vol_names = glob.glob(base_data_dir + 'train/vols/*.npz')
-random.shuffle(train_vol_names)  # shuffle volume list
+train_seg_dir = base_data_dir + 'train/asegs/'
 
 # load atlas from provided files. This atlas is 160x192x224.
-# atlas = np.load('../data/atlas_norm.npz')
-# atlas_vol = atlas['vol'][np.newaxis,...,np.newaxis]
-
 atlas_vol = nib.load('../t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+seg = nib.load('../t2_atlas_seg_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins, patch_size, max_clip, reg_param, model_save_iter, invert_images, crop_background, local_mi, sigma_ratio, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, gamma, num_bins, patch_size, max_clip, reg_param, model_save_iter, local_mi, sigma_ratio, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -57,11 +55,18 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
     :param model_save_iter: frequency with which to save models
     :param batch_size: Optional, default of 1. can be larger, depends on GPU memory and volume size
     """
-    start_time = time.time()
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
     restrict_GPU_tf(str(gpu_id))
     restrict_GPU_keras(str(gpu_id))
+
+    train_labels = sio.loadmat('../data/labels.mat')['labels'][0]
+    n_labels = train_labels.shape[0]
+
+    normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
+
+    atlas_seg = datagenerators.split_seg_into_channels(seg, train_labels)
+    atlas_seg = datagenerators.downsample(atlas_seg)
 
     model_dir = "../models/" + model_name
     # prepare model folder
@@ -87,46 +92,41 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, num_bins
     # in the CVPR layout, the model takes in [image_1, image_2] and outputs [warped_image_1, flow]
     # in the experiments, we use image_2 as atlas
 
-    # autoencoder_path = '../models/%s/%s.h5' % (autoencoder_model, autoencoder_iters)
     bin_centers = np.linspace(0, max_clip, num_bins*2+1)[1::2]
-    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, crop_background=crop_background, local_mi=local_mi, patch_size=patch_size, sigma_ratio=sigma_ratio)
+    loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, local_mi=local_mi, patch_size=patch_size, sigma_ratio=sigma_ratio)
 
-    model = networks.unet(vol_size, nf_enc, nf_dec)
+    model = networks.unet(vol_size, nf_enc, nf_dec, use_seg=True, n_seg=len(train_labels))
     model.compile(optimizer=Adam(lr=lr), 
-                  loss=[loss_function, losses.gradientLoss('l2')],
-                  loss_weights=[1, reg_param])
+                  loss=[loss_function, losses.gradientLoss('l2'), losses.diceLoss],
+                  loss_weights=[1 if use_mi else 0, reg_param, gamma])
 
-    print('inputs', model.inputs)
+
     # if you'd like to initialize the data, you can do it here:
     if pretrained_path != None and pretrained_path != '':
         model.load_weights(pretrained_path)
 
     # prepare data for training
-    train_example_gen = datagenerators.example_gen(train_vol_names)
+    train_example_gen = datagenerators.example_gen(train_vol_names, return_segs=True, seg_dir=train_seg_dir)
     zero_flow = np.zeros([batch_size, *vol_size, 3])
 
-    normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
     # train. Note: we use train_on_batch and design out own print function as this has enabled 
     # faster development and debugging, but one could also use fit_generator and Keras callbacks.
     for step in range(0, n_iterations):
 
         # get data
-        X = next(train_example_gen)[0]
-        if invert_images:
-            X = max_clip - X
+        X = next(train_example_gen)
+        X_seg = X[1]
+
+        X_seg = datagenerators.split_seg_into_channels(X_seg, train_labels)
+        X_seg = datagenerators.downsample(X_seg)
 
         # train
-        train_loss = model.train_on_batch([X, normalized_atlas_vol], [normalized_atlas_vol, zero_flow])
-
-        if step == 0:
-            print('first step took', time.time() - start_time, 'seconds')
-
+        train_loss = model.train_on_batch([X[0], atlas_vol, X_seg], [atlas_vol, zero_flow, atlas_seg])
         if not isinstance(train_loss, list):
             train_loss = [train_loss]
 
         # print the loss. 
-        if step < 100 or step % 100 == 0:
-            print_loss(step, 1, train_loss)
+        print_loss(step, 1, train_loss)
 
         # save model
         if step % model_save_iter == 0:
@@ -165,8 +165,10 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float,
                         dest="lr", default=1e-4, help="learning rate")
     parser.add_argument("--iters", type=int,
-                        dest="n_iterations", default=400000,
+                        dest="n_iterations", default=150000,
                         help="number of iterations")
+    parser.add_argument('--use_mi', dest='use_mi', action='store_true')
+    parser.set_defaults(use_mi=False)
     parser.add_argument("--num_bins", type=int,
                         dest="num_bins", default=48,
                         help="number of bins when calculating mutual information")
@@ -188,11 +190,11 @@ if __name__ == "__main__":
     parser.add_argument("--sigma_ratio", type=float,
                         dest="sigma_ratio", default=0.5,
                         help="sigma to bin width ratio in MI")
-    parser.add_argument("--invert_images", dest="invert_images", action="store_true")
-    parser.set_defaults(invert_images=False)
-    parser.add_argument("--crop_background", dest="crop_background", action="store_true")
-    parser.set_defaults(crop_background=False)
     parser.add_argument("--local_mi", dest="local_mi", action="store_true")
     parser.set_defaults(local_mi=False)
+    parser.add_argument("--gamma", type=float,
+                        dest="gamma", default=1,
+                        help="diceloss weight")
+
     args = parser.parse_args()
     train(**vars(args))
