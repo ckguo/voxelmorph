@@ -43,7 +43,7 @@ atlas_vol = nib.load('../t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.
 seg = nib.load('../t2_atlas_seg_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, gamma, num_bins, patch_size, max_clip, reg_param, model_save_iter, local_mi, sigma_ratio, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, gamma, num_bins, patch_size, max_clip, reg_param, model_save_iter, local_mi, sigma_ratio, epsilon, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -100,7 +100,6 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, 
                   loss=[loss_function, losses.gradientLoss('l2'), losses.diceLoss],
                   loss_weights=[1 if use_mi else 0, reg_param, gamma])
 
-
     # if you'd like to initialize the data, you can do it here:
     if pretrained_path != None and pretrained_path != '':
         model.load_weights(pretrained_path)
@@ -121,7 +120,7 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, 
         X_seg = datagenerators.downsample(X_seg)
 
         # train
-        train_loss = model.train_on_batch([X[0], atlas_vol, X_seg], [atlas_vol, zero_flow, atlas_seg])
+        train_loss = model.train_on_batch([X[0], normalized_atlas_vol, X_seg], [normalized_atlas_vol, zero_flow, atlas_seg])
         if not isinstance(train_loss, list):
             train_loss = [train_loss]
 
