@@ -1,7 +1,19 @@
 """
 tensorflow/keras utilities for the neuron project
 
+If you use this code, please cite 
+Dalca AV, Guttag J, Sabuncu MR
+Anatomical Priors in Convolutional Networks for Unsupervised Biomedical Segmentation, 
+CVPR 2018
+
+or for the transformation/interpolation related functions:
+
+Unsupervised Learning for Fast Probabilistic Diffeomorphic Registration
+Adrian V. Dalca, Guha Balakrishnan, John Guttag, Mert R. Sabuncu
+MICCAI 2018.
+
 Contact: adalca [at] csail [dot] mit [dot] edu
+License: GPLv3
 """
 
 # python imports
@@ -36,7 +48,7 @@ def interpn(vol, loc, interp_method='linear'):
         vol: volume with size vol_shape or [*vol_shape, nb_features]
         loc: a N-long list of N-D Tensors (the interpolation locations) for the new grid
             each tensor has to have the same size (but not nec. same size as vol)
-            or a tensor of size [*new_vol_shape, N]
+            or a tensor of size [*new_vol_shape, D]
         interp_method: interpolation type 'linear' (default) or 'nearest'
 
     Returns:
@@ -46,17 +58,16 @@ def interpn(vol, loc, interp_method='linear'):
         enable optional orig_grid - the original grid points.
         check out tf.contrib.resampler, only seems to work for 2D data
     """
-
+    
     if isinstance(loc, (list, tuple)):
         loc = tf.stack(loc, -1)
 
-    # extract and check sizes and dimensions
-    new_volshape = loc.shape[:-1]
-    nb_dims = len(new_volshape)
+    # since loc can be a list, nb_dims has to be based on vol.
+    nb_dims = loc.shape[-1]
 
-    if nb_dims != loc.shape[-1]:
+    if nb_dims != len(vol.shape[:-1]):
         raise Exception("Number of loc Tensors %d does not match volume dimension %d"
-                        % (loc.shape[-1], nb_dims))
+                        % (nb_dims, len(vol.shape[:-1])))
 
     if nb_dims > len(vol.shape):
         raise Exception("Loc dimension %d does not match volume dimension %d"
@@ -67,64 +78,121 @@ def interpn(vol, loc, interp_method='linear'):
 
     # flatten and float location Tensors
     loc = tf.cast(loc, 'float32')
+    
+    if isinstance(vol.shape, (tf.Dimension, tf.TensorShape)):
+        volshape = vol.shape.as_list()
+    else:
+        volshape = vol.shape
 
     # interpolate
     if interp_method == 'linear':
-        loc0 = tf.cast(tf.floor(loc), 'int32')
+        loc0 = tf.floor(loc)
 
         # clip values
-        max_loc = [tf.cast(d - 1, 'int32') for d in new_volshape]
-        loc0 = [tf.clip_by_value(loc0[...,d], 0, max_loc[d]) for d in range(nb_dims)]
+        max_loc = [d - 1 for d in vol.get_shape().as_list()]
+        clipped_loc = [tf.clip_by_value(loc[...,d], 0, max_loc[d]) for d in range(nb_dims)]
+        loc0lst = [tf.clip_by_value(loc0[...,d], 0, max_loc[d]) for d in range(nb_dims)]
 
         # get other end of point cube
-        loc1 = [d + 1 for d in loc0]
-        locs = [loc0, loc1]
+        loc1 = [tf.clip_by_value(loc0lst[d] + 1, 0, max_loc[d]) for d in range(nb_dims)]
+        locs = [[tf.cast(f, 'int32') for f in loc0lst], [tf.cast(f, 'int32') for f in loc1]]
 
         # compute the difference between the upper value and the original value
         # differences are basically 1 - (pt - floor(pt))
         #   because: floor(pt) + 1 - pt = 1 + (floor(pt) - pt) = 1 - (pt - floor(pt))
-        loc1_float = [tf.cast(d, 'float32') for d in loc1]
-        diff_loc1 = [loc1_float[d] - loc[...,d] for d in range(nb_dims)]
+        diff_loc1 = [loc1[d] - clipped_loc[d] for d in range(nb_dims)]
         diff_loc0 = [1 - d for d in diff_loc1]
         weights_loc = [diff_loc1, diff_loc0] # note reverse ordering since weights are inverse of diff.
 
         # go through all the cube corners, indexed by a ND binary vector 
         # e.g. [0, 0] means this "first" corner in a 2-D "cube"
         cube_pts = list(itertools.product([0, 1], repeat=nb_dims))
-        wtvol_values = [None] * len(cube_pts)
+        interp_vol = 0
         
-        for ci, c in enumerate(cube_pts):
+        for c in cube_pts:
             
             # get nd values
-            indices = tf.stack([locs[c[d]][d] for d in range(nb_dims)], axis=-1)
-            vol_val = tf.gather_nd(vol, indices)
+            # note re: indices above volumes via https://github.com/tensorflow/tensorflow/issues/15091
+            #   It works on GPU because we do not perform index validation checking on GPU -- it's too
+            #   expensive. Instead we fill the output with zero for the corresponding value. The CPU
+            #   version caught the bad index and returned the appropriate error.
+            subs = [locs[c[d]][d] for d in range(nb_dims)]
+
+            # tf stacking is slow for large volumes, so we will use sub2ind and use single indexing.
+            # indices = tf.stack(subs, axis=-1)
+            # vol_val = tf.gather_nd(vol, indices)
+            # faster way to gather than gather_nd, because the latter needs tf.stack which is slow :(
+            idx = sub2ind(vol.shape[:-1], subs)
+            vol_val = tf.gather(tf.reshape(vol, [-1, volshape[-1]]), idx)
 
             # get the weight of this cube_pt based on the distance
             # if c[d] is 0 --> want weight = 1 - (pt - floor[pt]) = diff_loc1
             # if c[d] is 1 --> want weight = pt - floor[pt] = diff_loc0
-            wlm = tf.stack([weights_loc[c[d]][d] for d in range(nb_dims)], axis=0)
-            wt = tf.reduce_prod(wlm, axis=0)
+            wts_lst = [weights_loc[c[d]][d] for d in range(nb_dims)]
+            # tf stacking is slow, we we will use prod_n()
+            # wlm = tf.stack(wts_lst, axis=0)
+            # wt = tf.reduce_prod(wlm, axis=0)
+            wt = prod_n(wts_lst)
             wt = K.expand_dims(wt, -1)
             
             # compute final weighted value for each cube corner
-            wtvol_values[ci] = wt * vol_val
-        
-        interp_vol = tf.add_n(wtvol_values)
+            interp_vol += wt * vol_val
         
     else:
         assert interp_method == 'nearest'
         roundloc = tf.cast(tf.round(loc), 'int32')
 
         # clip values
-        max_loc = [tf.cast(d - 1, 'int32') for d in new_volshape]
+        max_loc = [tf.cast(d - 1, 'int32') for d in vol.shape]
         roundloc = [tf.clip_by_value(roundloc[...,d], 0, max_loc[d]) for d in range(nb_dims)]
-        roundloc = tf.stack(roundloc, axis=-1)
 
         # get values
-        interp_vol = tf.gather_nd(vol, roundloc) 
+        # tf stacking is slow. replace with gather
+        # roundloc = tf.stack(roundloc, axis=-1)
+        # interp_vol = tf.gather_nd(vol, roundloc)
+        idx = sub2ind(vol.shape[:-1], roundloc)
+        interp_vol = tf.gather(tf.reshape(vol, [-1, vol.shape[-1]]), idx) 
 
-    # print('interp_vol:', interp_vol)
-    return interp_vol # tf.reshape(interp_vol, loc.shape[:-1] + [vol.shape[-1]])
+    return interp_vol
+
+
+def resize(vol, zoom_factor, interp_method='linear'):
+    """
+    if zoom_factor is a list, it will determine the ndims, in which case vol has to be of length ndims of ndims + 1
+
+    if zoom_factor is an integer, then vol must be of length ndims + 1
+
+    """
+
+    if isinstance(zoom_factor, (list, tuple)):
+        ndims = len(zoom_factor)
+        vol_shape = vol.shape[:ndims]
+        
+        assert len(vol_shape) in (ndims, ndims+1), \
+            "zoom_factor length %d does not match ndims %d" % (len(vol_shape), ndims)
+
+    else:
+        vol_shape = vol.shape[:-1]
+        ndims = len(vol_shape)
+        zoom_factor = [zoom_factor] * ndims
+    if not isinstance(vol_shape[0], int):
+        vol_shape = vol_shape.as_list()
+
+    new_shape = [vol_shape[f] * zoom_factor[f] for f in range(ndims)]
+    new_shape = [int(f) for f in new_shape]
+
+    # get grid for new shape
+    grid = volshape_to_ndgrid(new_shape)
+    grid = [tf.cast(f, 'float32') for f in grid]
+    offset = [grid[f] / zoom_factor[f] - grid[f] for f in range(ndims)]
+    offset = tf.stack(offset, ndims)
+
+    # transform
+    return transform(vol, offset, interp_method)
+
+
+def zoom(*args, **kwargs):
+    return resize(*args, **kwargs)
 
 
 def affine_to_shift(affine_matrix, volshape, shift_center=True, indexing='ij'):
@@ -220,9 +288,6 @@ def transform(vol, loc_shift, interp_method='linear', indexing='ij'):
     else:
         volshape = loc_shift.shape[:-1]
     nb_dims = len(volshape)
-    # if loc_shift.shape[:-1] != vol.shape[:nb_dims]:
-        # raise Exception('Shift shape should match vol shape. '
-                        # 'Got: ' + loc_shift.shape[:-1] + ' and ' + vol.shape[:nb_dims])
 
     # location should be mesh and delta
     mesh = volshape_to_meshgrid(volshape, indexing=indexing)  # volume mesh
@@ -373,7 +438,7 @@ def volshape_to_meshgrid(volshape, **kwargs):
         A list of Tensors
 
     See Also:
-        tf.meshgrid, ndgrid, volshape_to_ndgrid
+        tf.meshgrid, meshgrid, ndgrid, volshape_to_ndgrid
     """
     
     isint = [float(d).is_integer() for d in volshape]
@@ -381,13 +446,13 @@ def volshape_to_meshgrid(volshape, **kwargs):
         raise ValueError("volshape needs to be a list of integers")
 
     linvec = [tf.range(0, d) for d in volshape]
-    return tf.meshgrid(*linvec, **kwargs)
+    return meshgrid(*linvec, **kwargs)
 
 
 def ndgrid(*args, **kwargs):
     """
     broadcast Tensors on an N-D grid with ij indexing
-    uses tf.meshgrid with ij indexing
+    uses meshgrid with ij indexing
 
     Parameters:
         *args: Tensors with rank 1
@@ -397,7 +462,7 @@ def ndgrid(*args, **kwargs):
         A list of Tensors
     
     """
-    return tf.meshgrid(*args, indexing='ij', **kwargs)
+    return meshgrid(*args, indexing='ij', **kwargs)
 
 
 def flatten(v):
@@ -414,7 +479,111 @@ def flatten(v):
     return tf.reshape(v, [-1])
 
 
-def gaussian_kernel(sigma, windowsize=None):
+def meshgrid(*args, **kwargs):
+    """
+    
+    meshgrid code that builds on (copies) tensorflow's meshgrid but dramatically
+    improves runtime by changing the last step to tiling instead of multiplication.
+    https://github.com/tensorflow/tensorflow/blob/c19e29306ce1777456b2dbb3a14f511edf7883a8/tensorflow/python/ops/array_ops.py#L1921
+    
+    Broadcasts parameters for evaluation on an N-D grid.
+    Given N one-dimensional coordinate arrays `*args`, returns a list `outputs`
+    of N-D coordinate arrays for evaluating expressions on an N-D grid.
+    Notes:
+    `meshgrid` supports cartesian ('xy') and matrix ('ij') indexing conventions.
+    When the `indexing` argument is set to 'xy' (the default), the broadcasting
+    instructions for the first two dimensions are swapped.
+    Examples:
+    Calling `X, Y = meshgrid(x, y)` with the tensors
+    ```python
+    x = [1, 2, 3]
+    y = [4, 5, 6]
+    X, Y = meshgrid(x, y)
+    # X = [[1, 2, 3],
+    #      [1, 2, 3],
+    #      [1, 2, 3]]
+    # Y = [[4, 4, 4],
+    #      [5, 5, 5],
+    #      [6, 6, 6]]
+    ```
+    Args:
+    *args: `Tensor`s with rank 1.
+    **kwargs:
+      - indexing: Either 'xy' or 'ij' (optional, default: 'xy').
+      - name: A name for the operation (optional).
+    Returns:
+    outputs: A list of N `Tensor`s with rank N.
+    Raises:
+    TypeError: When no keyword arguments (kwargs) are passed.
+    ValueError: When indexing keyword argument is not one of `xy` or `ij`.
+    """
+
+    indexing = kwargs.pop("indexing", "xy")
+    name = kwargs.pop("name", "meshgrid")
+    if kwargs:
+        key = list(kwargs.keys())[0]
+        raise TypeError("'{}' is an invalid keyword argument "
+                    "for this function".format(key))
+
+    if indexing not in ("xy", "ij"):
+        raise ValueError("indexing parameter must be either 'xy' or 'ij'")
+
+    # with ops.name_scope(name, "meshgrid", args) as name:
+    ndim = len(args)
+    s0 = (1,) * ndim
+
+    # Prepare reshape by inserting dimensions with size 1 where needed
+    output = []
+    for i, x in enumerate(args):
+        output.append(tf.reshape(tf.stack(x), (s0[:i] + (-1,) + s0[i + 1::])))
+    # Create parameters for broadcasting each tensor to the full size
+    shapes = [tf.size(x) for x in args]
+    sz = [x.get_shape().as_list()[0] for x in args]
+
+    # output_dtype = tf.convert_to_tensor(args[0]).dtype.base_dtype
+
+    if indexing == "xy" and ndim > 1:
+        output[0] = tf.reshape(output[0], (1, -1) + (1,) * (ndim - 2))
+        output[1] = tf.reshape(output[1], (-1, 1) + (1,) * (ndim - 2))
+        shapes[0], shapes[1] = shapes[1], shapes[0]
+        sz[0], sz[1] = sz[1], sz[0]
+
+    # This is the part of the implementation from tf that is slow. 
+    # We replace it below to get a ~6x speedup (essentially using tile instead of * tf.ones())
+    # TODO(nolivia): improve performance with a broadcast  
+    # mult_fact = tf.ones(shapes, output_dtype)
+    # return [x * mult_fact for x in output]
+    for i in range(len(output)):       
+        output[i] = tf.tile(output[i], tf.stack([*sz[:i], 1, *sz[(i+1):]]))
+    return output
+    
+
+    
+def prod_n(lst):
+    prod = lst[0]
+    for p in lst[1:]:
+        prod *= p
+    return prod
+
+
+def sub2ind(siz, subs, **kwargs):
+    """
+    assumes column-order major
+    """
+    # subs is a list
+    assert len(siz) == len(subs), 'found inconsistent siz and subs: %d %d' % (len(siz), len(subs))
+
+    k = np.cumprod(siz[::-1])
+
+    ndx = subs[-1]
+    for i, v in enumerate(subs[:-1][::-1]):
+        ndx = ndx + v * k[i]
+
+    return ndx
+
+
+
+def gaussian_kernel(sigma, windowsize=None, indexing='ij'):
     """
     sigma will be a number of a list of numbers.
 
@@ -450,8 +619,8 @@ def gaussian_kernel(sigma, windowsize=None):
 
     # list of volume ndgrid
     # N-long list, each entry of shape volshape
-    mesh = volshape_to_meshgrid(windowsize)  
-    mesh = tf.cast(mesh, 'float32')
+    mesh = volshape_to_meshgrid(windowsize, indexing=indexing)  
+    mesh = [tf.cast(f, 'float32') for f in mesh]
 
     # compute independent gaussians
     diff = [mesh[f] - mid[f] for f in range(len(windowsize))]
@@ -465,6 +634,8 @@ def gaussian_kernel(sigma, windowsize=None):
     g /= tf.reduce_sum(g)
 
     return g
+
+
 
 
 
@@ -510,7 +681,12 @@ def stack_models(models, connecting_node_ids=None):
         output_tensors = mod_submodel(models[mi], new_input_nodes=new_input_nodes)
         stacked_inputs = stacked_inputs + stacked_inputs_contrib
 
-    stacked_inputs = [i for i in stacked_inputs if i is not None]
+    stacked_inputs_ = [i for i in stacked_inputs if i is not None]
+    # check for unique, but keep order:
+    stacked_inputs = []
+    for inp in stacked_inputs_:
+        if inp not in stacked_inputs:
+            stacked_inputs.append(inp)
     new_model = keras.models.Model(stacked_inputs, output_tensors)
     return new_model
 
@@ -569,7 +745,6 @@ def mod_submodel(orig_model,
             if add:
                 dct[node.outbound_layer].append(node.inbound_layers)
                 dct_node_idx.setdefault(node.outbound_layer, []).append(node.node_indices)
-                #print(node, node.outbound_layer)
             # append is in place
 
             # add new node

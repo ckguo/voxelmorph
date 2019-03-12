@@ -13,6 +13,8 @@ import sys
 import numpy as np
 import keras.backend as K
 from keras.models import Model, load_model
+import keras.layers as KL
+from keras.layers import Layer
 from keras.layers import Conv3D, Activation, Input, UpSampling3D, concatenate
 from keras.layers import LeakyReLU, Reshape, Lambda
 from keras.initializers import RandomNormal
@@ -71,10 +73,15 @@ def unet_full(vol_size, enc_nf, dec_nf, full_size=True):
     :param dec_nf: list of decoder filters. right now it must be 1x6 (like voxelmorph-1) or 1x7 (voxelmorph-2)
     :return: the keras model
     """
+    ndims = len(vol_size)
+    assert ndims in [1, 2, 3], "ndims should be one of 1, 2, or 3. found: %d" % ndims
+    upsample_layer = getattr(KL, 'UpSampling%dD' % ndims)
+
     # inputs
     src = Input(shape=vol_size + (1,))
     tgt = Input(shape=vol_size + (1,))
     x_in = concatenate([src, tgt])
+    
 
     # down-sample path (encoder)
     x_enc = [x_in]
@@ -83,13 +90,13 @@ def unet_full(vol_size, enc_nf, dec_nf, full_size=True):
 
     # up-sample path (decoder)
     x = conv_block(x_enc[-1], dec_nf[0])
-    x = UpSampling3D()(x)
+    x = upsample_layer()(x)
     x = concatenate([x, x_enc[-2]])
     x = conv_block(x, dec_nf[1])
-    x = UpSampling3D()(x)
+    x = upsample_layer()(x)
     x = concatenate([x, x_enc[-3]])
     x = conv_block(x, dec_nf[2])
-    x = UpSampling3D()(x)
+    x = upsample_layer()(x)
     x = concatenate([x, x_enc[-4]])
     x = conv_block(x, dec_nf[3])
     x = conv_block(x, dec_nf[4])
@@ -98,7 +105,7 @@ def unet_full(vol_size, enc_nf, dec_nf, full_size=True):
     # here we explore architectures where we essentially work with flow fields 
     # that are 1/2 size 
     if full_size:
-        x = UpSampling3D()(x)
+        x = upsample_layer()(x)
         x = concatenate([x, x_enc[0]])
         x = conv_block(x, dec_nf[5])
 
@@ -132,7 +139,7 @@ def interp_downsampling(V):
 
     return V[:, ::2, ::2, ::2, :]
 
-def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
+def cvpr2018_net(vol_size, enc_nf, dec_nf, full_size=True, indexing='ij', use_seg=False, n_seg=2):
     """
     unet architecture for voxelmorph models presented in the CVPR 2018 paper. 
     You may need to modify this code (e.g., number of layers) to suit your project needs.
@@ -143,6 +150,8 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
     :param dec_nf: list of decoder filters. right now it must be 1x6 (like voxelmorph-1) or 1x7 (voxelmorph-2)
     :return: the keras model
     """
+    ndims = len(vol_size)
+    assert ndims in [1, 2, 3], "ndims should be one of 1, 2, or 3. found: %d" % ndims
 
     # get the core model
     unet_model = unet_core(vol_size, enc_nf, dec_nf, full_size=full_size)
@@ -150,11 +159,12 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
     x = unet_model.output
 
     # transform the results into a flow field.
-    flow = Conv3D(3, kernel_size=3, padding='same',
-                  kernel_initializer=RandomNormal(mean=0.0, stddev=1e-5), name='flow')(x)
+    Conv = getattr(KL, 'Conv%dD' % ndims)
+    flow = Conv(ndims, kernel_size=3, padding='same', name='flow',
+                  kernel_initializer=RandomNormal(mean=0.0, stddev=1e-5))(x)
 
     # warp the source with the flow
-    y = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([src, flow])
+    y = nrn_layers.SpatialTransformer(interp_method='linear', indexing=indexing)([src, flow])
     # prepare model
     if not use_seg:
         model = Model(inputs=[src, tgt], outputs=[y, flow])
@@ -171,7 +181,7 @@ def unet(vol_size, enc_nf, dec_nf, full_size=True, use_seg=False, n_seg=2):
     return model
 
 
-def miccai2018_net(vol_size, enc_nf, dec_nf, use_miccai_int=True, int_steps=7, indexing='xy'):
+def miccai2018_net(vol_size, enc_nf, dec_nf, int_steps=7, use_miccai_int=False, indexing='ij', bidir=False, vel_resize=1/2):
     """
     architecture for probabilistic diffeomoprhic VoxelMorph presented in the MICCAI 2018 paper. 
     You may need to modify this code (e.g., number of layers) to suit your project needs.
@@ -185,34 +195,40 @@ def miccai2018_net(vol_size, enc_nf, dec_nf, use_miccai_int=True, int_steps=7, i
     :param use_miccai_int: whether to use the manual miccai implementation of scaling and squaring integration
             note that the 'velocity' field outputted in that case was 
             since then we've updated the code to be part of a flexible layer. see neuron.layers.VecInt
+            **This param will be phased out (set to False behavior)**
     :param int_steps: the number of integration steps
     :param indexing: xy or ij indexing. we recommend ij indexing if training from scratch. 
             miccai 2018 runs were done with xy indexing.
+            **This param will be phased out (set to 'ij' behavior)**
     :return: the keras model
     """    
-    
+    ndims = len(vol_size)
+    assert ndims in [1, 2, 3], "ndims should be one of 1, 2, or 3. found: %d" % ndims
+
     # get unet
     unet_model = unet_core(vol_size, enc_nf, dec_nf, full_size=False)
-    [src,tgt] = unet_model.inputs
+    [src, tgt] = unet_model.inputs
     x_out = unet_model.outputs[-1]
 
     # velocity mean and logsigma layers
-    flow_mean = Conv3D(3, kernel_size=3, padding='same',
+    Conv = getattr(KL, 'Conv%dD' % ndims)
+    flow_mean = Conv(ndims, kernel_size=3, padding='same',
                        kernel_initializer=RandomNormal(mean=0.0, stddev=1e-5), name='flow')(x_out)
-
-    flow_log_sigma = Conv3D(3, kernel_size=3, padding='same',
+    # we're going to initialize the velocity variance very low, to start stable.
+    flow_log_sigma = Conv(ndims, kernel_size=3, padding='same',
                             kernel_initializer=RandomNormal(mean=0.0, stddev=1e-10),
-                            bias_initializer=keras.initializers.Constant(value=-10), name='log_sigma')(x_out)
+                            bias_initializer=keras.initializers.Constant(value=-10),
+                            name='log_sigma')(x_out)
     flow_params = concatenate([flow_mean, flow_log_sigma])
 
     # velocity sample
-    flow = Lambda(sample, name="z_sample")([flow_mean, flow_log_sigma])
+    flow = Sample(name="z_sample")([flow_mean, flow_log_sigma])
 
     # integrate if diffeomorphic (i.e. treating 'flow' above as stationary velocity field)
     if use_miccai_int:
-        # for the miccai2018 submission, the scaling and squaring layer
+        # for the miccai2018 submission, the squaring layer
+        # scaling was essentially built in by the network
         # was manually composed of a Transform and and Add Layer.
-        flow = Lambda(lambda x: x, name='flow-fix')(flow)  # remanant of old code
         v = flow
         for _ in range(int_steps):
             v1 = nrn_layers.SpatialTransformer(interp_method='linear', indexing=indexing)([v, v])
@@ -221,26 +237,33 @@ def miccai2018_net(vol_size, enc_nf, dec_nf, use_miccai_int=True, int_steps=7, i
 
     else:
         # new implementation in neuron is cleaner.
-        # the 2**int_steps is a correcting factor left over from the miccai implementation.
-        # * (2**int_steps)
-        flow = Lambda(lambda x: x, name='flow-fix')(flow)
-        flow = nrn_layers.VecInt(method='ss', name='flow-int', int_steps=7)(flow)       
+        z_sample = flow
+        flow = nrn_layers.VecInt(method='ss', name='flow-int', int_steps=int_steps)(z_sample)
+        if bidir:
+            rev_z_sample = Negate()(z_sample)
+            neg_flow = nrn_layers.VecInt(method='ss', name='neg_flow-int', int_steps=int_steps)(rev_z_sample)
 
     # get up to final resolution
-    flow = Lambda(interp_upsampling, output_shape=vol_size+(3,), name='pre_diffflow')(flow)
-    flow = Lambda(lambda arg: arg*2, name='diffflow')(flow)
+    flow = trf_resize(flow, vel_resize, name='diffflow')
+
+    if bidir:
+        neg_flow = trf_resize(neg_flow, vel_resize, name='neg_diffflow')
 
     # transform
     y = nrn_layers.SpatialTransformer(interp_method='linear', indexing=indexing)([src, flow])
+    if bidir:
+        y_tgt = nrn_layers.SpatialTransformer(interp_method='linear', indexing=indexing)([tgt, neg_flow])
 
     # prepare outputs and losses
     outputs = [y, flow_params]
+    if bidir:
+        outputs = [y, y_tgt, flow_params]
 
     # build the model
     return Model(inputs=[src, tgt], outputs=outputs)
 
 
-def nn_trf(vol_size):
+def nn_trf(vol_size, indexing='xy'):
     """
     Simple transform model for nearest-neighbor based transformation
     Note: this is essentially a wrapper for the neuron.utils.transform(..., interp_method='nearest')
@@ -253,7 +276,7 @@ def nn_trf(vol_size):
 
     # note the nearest neighbour interpolation method
     # note xy indexing because Guha's original code switched x and y dimensions
-    nn_output = nrn_layers.SpatialTransformer(interp_method='nearest', indexing='xy')
+    nn_output = nrn_layers.SpatialTransformer(interp_method='nearest', indexing=indexing)
     nn_spatial_output = nn_output([subj_input, trf_input])
     return keras.models.Model([subj_input, trf_input], nn_spatial_output)
 
@@ -263,11 +286,15 @@ def conv_block(x_in, nf, strides=1):
     """
     specific convolution module including convolution followed by leakyrelu
     """
+    ndims = len(x_in.get_shape()) - 2
+    assert ndims in [1, 2, 3], "ndims should be one of 1, 2, or 3. found: %d" % ndims
 
-    x_out = Conv3D(nf, kernel_size=3, padding='same',
-                   kernel_initializer='he_normal', strides=strides)(x_in)
+    Conv = getattr(KL, 'Conv%dD' % ndims)
+    x_out = Conv(nf, kernel_size=3, padding='same',
+                 kernel_initializer='he_normal', strides=strides)(x_in)
     x_out = LeakyReLU(0.2)(x_out)
     return x_out
+
 
 
 def sample(args):
@@ -280,23 +307,75 @@ def sample(args):
     z = mu + tf.exp(log_sigma/2.0) * noise
     return z
 
-def interp_upsampling(V):
+def trf_resize(trf, vel_resize, name='flow'):
+    if vel_resize > 1:
+        trf = nrn_layers.Resize(1/vel_resize, name=name+'_tmp')(trf)
+        return Rescale(1 / vel_resize, name=name)(trf)
+
+    else: # multiply first to save memory (multiply in smaller space)
+        trf = Rescale(1 / vel_resize, name=name+'_tmp')(trf)
+        return  nrn_layers.Resize(1/vel_resize, name=name)(trf)
+
+
+class Sample(Layer):
     """ 
-    upsample a field by a factor of 2
-    TODO: should switch this to use neuron.utils.interpn()
+    Keras Layer: Gaussian sample from [mu, sigma]
     """
 
-    [xx, yy, zz] = nrn_utils.volshape_to_ndgrid([f*2 for f in V.get_shape().as_list()[1:4]])
-    xx = tf.cast(xx, 'float32')
-    yy = tf.cast(yy, 'float32')
-    zz = tf.cast(zz, 'float32')
-    xx = tf.expand_dims(xx/2-xx, 0)
-    yy = tf.expand_dims(yy/2-yy, 0)
-    zz = tf.expand_dims(zz/2-zz, 0)
-    offset = tf.stack([xx, yy, zz], 4)
+    def __init__(self, **kwargs):
+        super(Sample, self).__init__(**kwargs)
 
-    # V = nrn_utils.transform(V, offset)
-    V = nrn_layers.SpatialTransformer(interp_method='linear')([V, offset])
+    def build(self, input_shape):
+        super(Sample, self).build(input_shape)  # Be sure to call this somewhere!
 
-    return V
+    def call(self, x):
+        return sample(x)
 
+    def compute_output_shape(self, input_shape):
+        return input_shape[0]
+
+
+class Negate(Layer):
+    """ 
+    Keras Layer: negative of the input
+    """
+
+    def __init__(self, **kwargs):
+        super(Negate, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        super(Negate, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, x):
+        return -x
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+class Rescale(Layer):
+    """ 
+    Keras layer: rescale data by fixed factor
+    """
+
+    def __init__(self, resize, **kwargs):
+        self.resize = resize
+        super(Rescale, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        super(Rescale, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, x):
+        return x * self.resize 
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+class RescaleDouble(Rescale):
+    def __init__(self, **kwargs):
+        self.resize = 2
+        super(RescaleDouble, self).__init__(self.resize, **kwargs)
+
+class ResizeDouble(nrn_layers.Resize):
+    def __init__(self, **kwargs):
+        self.zoom_factor = 2
+        super(ResizeDouble, self).__init__(self.zoom_factor, **kwargs)

@@ -28,12 +28,11 @@ test_brain_strings = [x.strip() for x in test_brain_strings]
 n_batches = len(test_brain_strings)
 good_labels = sio.loadmat('../data/labels.mat')['labels'][0]
 
-
 base_data_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/'
 val_vol_names = glob.glob(base_data_dir + 'validate/vols/*.npz')
 seg_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/validate/asegs/'
 
-def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
+def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
     """
     test
 
@@ -58,8 +57,8 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
     # atlas_seg = atlas['seg']
     # atlas_vol = np.reshape(atlas_vol, (1,)+atlas_vol.shape+(1,))
 
-    atlas_vol = nib.load('../t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
-    atlas_seg = nib.load('../t2_atlas_seg_027_S_2219.nii').get_data()
+    atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+    atlas_seg = nib.load('../data/t2_atlas_seg_027_S_2219.nii').get_data()
 
     normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
 
@@ -70,9 +69,9 @@ def test(model_name, iter_num, gpu_id, n_test, invert_images, max_clip, vol_size
 
     # load weights of model
     with tf.device(gpu):
-        net = networks.unet(vol_size, nf_enc, nf_dec)
+        net = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
         net.load_weights('../models/' + model_name +
-                         '/' + str(iter_num) + '.h5')
+                         '/' + str(epoch) + '.h5')
 
     xx = np.arange(vol_size[1])
     yy = np.arange(vol_size[0])
@@ -123,9 +122,9 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str,
                         dest="model_name", default=None,
                         help="models folder")
-    parser.add_argument("--iter_num", type=int,
-                        dest="iter_num", default=0,
-                        help="number of iterations of saved model")
+    parser.add_argument("--epoch", type=int,
+                        dest="epoch", default=0,
+                        help="epoch number of saved model")
     parser.add_argument("--gpu", type=int, default=0,
                         dest="gpu_id", help="gpu id number")
     parser.add_argument("--n_test", type=int, default=50,
