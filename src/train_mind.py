@@ -40,6 +40,7 @@ def train(data_dir,
           max_clip,
           distance,
           patch_size,
+          use_ssc,
           initial_epoch=0):
     """
     model training function
@@ -123,11 +124,11 @@ def train(data_dir,
     # prepare callbacks
     save_file_name = os.path.join(model_dir, '{epoch:02d}.h5')
 
-    loss_function = losses.mind(distance, patch_size)
+    loss_function = losses.mind(distance, patch_size, use_ssc=use_ssc)
 
     # fit generator
     with tf.device(gpu):
-        
+
         # multi-gpu support
         if nb_gpus > 1:
             save_callback = nrn_gen.ModelCheckpointParallel(save_file_name)
@@ -191,5 +192,7 @@ if __name__ == "__main__":
     parser.add_argument("--patch_size", type=int,
                         dest="patch_size", default=1,
                         help="patch size for MIND")
+    parser.add_argument("--ssc", dest="use_ssc", action="store_true")
+    parser.set_defaults(use_ssc=False)
     args = parser.parse_args()
     train(**vars(args))

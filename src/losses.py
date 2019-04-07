@@ -280,7 +280,7 @@ def localMutualInformation(bin_centers,
 
     return loss
 
-def mind(d, patch_size, var=0.004):
+def mind(d, patch_size, var=0.004, use_ssc=False):
     # see http://www.mpheinrich.de/pub/MEDIA_mycopy.pdf
 
     def ssd_shift(image, direction):
@@ -304,27 +304,51 @@ def mind(d, patch_size, var=0.004):
         conv = tf.nn.conv3d(diff[tf.newaxis,:,:,:,tf.newaxis], sum_filt, [1]*5, 'SAME')
         return tf.exp(-conv/var)
 
-    def loss(y_true, y_pred):
+    def mind_loss(y_true, y_pred):
         ndims = 3
         y_true = tf.squeeze(y_true)
         y_pred = tf.squeeze(y_pred)
-        loss_tensor = None
+        loss_tensor = 0
         for i in range(ndims):
             direction = [0]*3
             direction[i] = d
 
-            if loss_tensor == None:
-                loss_tensor = tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
-            else:
-                loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
+            loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
 
             direction = [0]*3
             direction[i] = -d
             loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
 
-        return tf.reduce_mean(loss_tensor)
+        return loss_tensor/(ndims*2)
 
-    return loss
+    def ssc_loss(y_true, y_pred):
+        ndims = 3
+        y_true = tf.squeeze(y_true)
+        y_pred = tf.squeeze(y_pred)
+        loss_tensor = 0
+        directions = []
+        for i in range(ndims):
+            direction = [0]*3
+            direction[i] = d
+            directions.append(direction)
+
+            direction = [0]*3
+            direction[i] = -d
+            directions.append(direction)
+
+        for i in range(len(directions)):
+            for j in range(i, len(directions)):
+                d1 = directions[i]
+                d2 = directions[j]
+
+                loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, d1) - ssd_shift(y_pred, d2)))
+
+        return loss_tensor/(len(directions)*(len(directions)-1)/2)
+
+    if use_ssc:
+        return ssc_loss
+    else:
+        return mind_loss
 
 
 def binary_dice(y_true, y_pred):
