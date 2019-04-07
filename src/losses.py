@@ -280,6 +280,52 @@ def localMutualInformation(bin_centers,
 
     return loss
 
+def mind(d, patch_size, var=0.004):
+    # see http://www.mpheinrich.de/pub/MEDIA_mycopy.pdf
+
+    def ssd_shift(image, direction):
+        # expects a 3d image
+        x,y,z = vol_size
+        new_shift = np.clip(direction, 0, None)
+        old_shift = -np.clip(direction, None, 0)
+
+        # translate images
+        new_image = image[new_shift[0]:x-old_shift[0], new_shift[1]:y-old_shift[1], new_shift[2]:z-old_shift[2]]
+        old_image = image[old_shift[0]:x-new_shift[0], old_shift[1]:y-new_shift[1], old_shift[2]:z-new_shift[2]]
+        # get squared difference
+        diff = tf.square(new_image - old_image)
+
+        # pad the diff
+        padding = np.transpose([old_shift, new_shift])
+        diff = tf.pad(diff, padding)
+
+        # apply convolution
+        sum_filt = tf.ones([patch_size, patch_size, patch_size, 1, 1])/(patch_size**3)
+        conv = tf.nn.conv3d(diff[tf.newaxis,:,:,:,tf.newaxis], sum_filt, [1]*5, 'SAME')
+        return tf.exp(-conv/var)
+
+    def loss(y_true, y_pred):
+        ndims = 3
+        y_true = tf.squeeze(y_true)
+        y_pred = tf.squeeze(y_pred)
+        loss_tensor = None
+        for i in range(ndims):
+            direction = [0]*3
+            direction[i] = d
+
+            if loss_tensor == None:
+                loss_tensor = tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
+            else:
+                loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
+
+            direction = [0]*3
+            direction[i] = -d
+            loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
+
+        return tf.reduce_mean(loss_tensor)
+
+    return loss
+
 
 def binary_dice(y_true, y_pred):
     """

@@ -15,7 +15,7 @@ import numpy as np
 from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.models import load_model, Model
-from keras.losses import mean_squared_error
+from keras.losses import mean_squared_error, sparse_categorical_crossentropy
 import scipy.io as sio
 import nibabel as nib
 
@@ -39,11 +39,11 @@ train_vol_names = glob.glob(base_data_dir + 'train/vols/*.npz')
 train_seg_dir = base_data_dir + 'train/asegs/'
 
 # load atlas from provided files. This atlas is 160x192x224.
-atlas_vol = nib.load('../t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
-seg = nib.load('../t2_atlas_seg_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+seg = nib.load('../data/t2_atlas_seg_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
 
 
-def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, gamma, num_bins, patch_size, max_clip, reg_param, model_save_iter, local_mi, sigma_ratio, epsilon, batch_size=1):
+def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, gamma, num_bins, patch_size, max_clip, reg_param, model_save_iter, local_mi, sigma_ratio, batch_size=1):
     """
     model training function
     :param model: either vm1 or vm2 (based on CVPR 2018 paper)
@@ -95,9 +95,9 @@ def train(model, pretrained_path, model_name, gpu_id, lr, n_iterations, use_mi, 
     bin_centers = np.linspace(0, max_clip, num_bins*2+1)[1::2]
     loss_function = losses.mutualInformation(bin_centers, max_clip=max_clip, local_mi=local_mi, patch_size=patch_size, sigma_ratio=sigma_ratio)
 
-    model = networks.unet(vol_size, nf_enc, nf_dec, use_seg=True, n_seg=len(train_labels))
+    model = networks.cvpr2018_net(vol_size, nf_enc, nf_dec, use_seg=True, n_seg=len(train_labels))
     model.compile(optimizer=Adam(lr=lr), 
-                  loss=[loss_function, losses.gradientLoss('l2'), losses.diceLoss],
+                  loss=[loss_function, losses.gradientLoss('l2'), sparse_categorical_crossentropy],
                   loss_weights=[1 if use_mi else 0, reg_param, gamma])
 
     # if you'd like to initialize the data, you can do it here:

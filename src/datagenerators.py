@@ -91,7 +91,10 @@ def example_gen(vol_names, batch_size=1, return_segs=False, seg_dir=None):
         if return_segs:
             X_data = []
             for idx in idxes:
-                X_seg = load_volfile(vol_names[idx].replace('norm', 'aseg'))
+                name = os.path.basename(vol_names[idx])
+                X_seg = np.load(seg_dir + name[0:-8]+'aseg.npz')['vol_data']
+                
+                # X_seg = load_volfile(vol_names[idx].replace('norm', 'aseg'))
                 X_seg = X_seg[np.newaxis, ..., np.newaxis]
                 X_data.append(X_seg)
             

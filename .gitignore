@@ -3,3 +3,4 @@ models/
 images/
 __pycache__/
 scratch/*
+notebooks/.ipynb_checkpoints/*

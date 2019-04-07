@@ -33,7 +33,7 @@ def slices(slices_in,           # the 2D slices
     # input processing
     nb_plots = len(slices_in)
     for si, slice_in in enumerate(slices_in):
-        assert len(slice_in.shape) == 2, 'each slice has to be 2d: 2d channels'
+        # assert len(slice_in.shape) == 2, 'each slice has to be 2d: 2d channels'
         slices_in[si] = slice_in.astype('float')
         
 

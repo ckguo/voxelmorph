@@ -171,11 +171,11 @@ def cvpr2018_net(vol_size, enc_nf, dec_nf, full_size=True, indexing='ij', use_se
     else:
         downfac = 2
         src_seg = Input(
-            shape=(vol_size[0]/downfac, vol_size[1]/downfac, vol_size[2]/downfac, n_seg))
+            shape=(vol_size[0]//downfac, vol_size[1]//downfac, vol_size[2]//downfac, n_seg))
 
         flow_dn = Lambda(interp_downsampling)(flow)
         flow_dn = Lambda(lambda arg: arg/2.0)(flow_dn)
-        y_seg = nrn_layers.SpatialTransformer(interp_method='linear', indexing='xy')([src_seg, flow_dn])
+        y_seg = nrn_layers.SpatialTransformer(interp_method='linear', indexing=indexing)([src_seg, flow_dn])
 
         model = Model(inputs=[src, tgt, src_seg], outputs=[y, flow, y_seg])
     return model
