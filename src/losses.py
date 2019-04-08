@@ -280,9 +280,18 @@ def localMutualInformation(bin_centers,
 
     return loss
 
-def mind(d, patch_size, var=0.004, use_ssc=False):
+def mind(d, patch_size, var=0.004, use_ssc=False, use_gaussian_kernel=False):
     # see http://www.mpheinrich.de/pub/MEDIA_mycopy.pdf
+    if use_gaussian_kernel:
+        dist = tf.distributions.Normal(0., 1.)
 
+        vals = dist.prob(tf.range(start = -(patch_size-1)/2, limit = (patch_size-1)/2 + 1, dtype = tf.float32))
+        kernel = tf.einsum('i,j,k->ijk', vals, vals, vals)
+        kernel = kernel / tf.reduce_sum(kernel)
+        kernel = kernel[:,:,:,tf.newaxis, tf.newaxis]
+    else:
+        kernel = tf.ones([patch_size, patch_size, patch_size, 1, 1])/(patch_size**3)
+        
     def ssd_shift(image, direction):
         # expects a 3d image
         x,y,z = vol_size
@@ -300,8 +309,7 @@ def mind(d, patch_size, var=0.004, use_ssc=False):
         diff = tf.pad(diff, padding)
 
         # apply convolution
-        sum_filt = tf.ones([patch_size, patch_size, patch_size, 1, 1])/(patch_size**3)
-        conv = tf.nn.conv3d(diff[tf.newaxis,:,:,:,tf.newaxis], sum_filt, [1]*5, 'SAME')
+        conv = tf.nn.conv3d(diff[tf.newaxis,:,:,:,tf.newaxis], kernel, [1]*5, 'SAME')
         return tf.exp(-conv/var)
 
     def mind_loss(y_true, y_pred):

@@ -41,6 +41,7 @@ def train(data_dir,
           distance,
           patch_size,
           use_ssc,
+          use_gaussian_kernel,
           initial_epoch=0):
     """
     model training function
@@ -124,7 +125,7 @@ def train(data_dir,
     # prepare callbacks
     save_file_name = os.path.join(model_dir, '{epoch:02d}.h5')
 
-    loss_function = losses.mind(distance, patch_size, use_ssc=use_ssc)
+    loss_function = losses.mind(distance, patch_size, use_ssc=use_ssc, use_gaussian_kernel=use_gaussian_kernel)
 
     # fit generator
     with tf.device(gpu):
@@ -194,5 +195,7 @@ if __name__ == "__main__":
                         help="patch size for MIND")
     parser.add_argument("--ssc", dest="use_ssc", action="store_true")
     parser.set_defaults(use_ssc=False)
+    parser.add_argument("--gaussian", dest="use_gaussian_kernel", action="store_true")
+    parser.set_defaults(use_gaussian_kernel=False)
     args = parser.parse_args()
     train(**vars(args))
