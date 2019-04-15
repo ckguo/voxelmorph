@@ -62,6 +62,9 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(1
 
     normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
 
+    # normalized_atlas_vol = nib.load('../data/t1_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
+    # atlas_seg = nib.load('../data/t1_atlas_seg.nii').get_data()
+
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
