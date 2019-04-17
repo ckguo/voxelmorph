@@ -262,23 +262,33 @@ def miccai2018_net(vol_size, enc_nf, dec_nf, int_steps=7, use_miccai_int=False, 
     # build the model
     return Model(inputs=[src, tgt], outputs=outputs)
 
-
-def nn_trf(vol_size, indexing='xy'):
+def trf_core(vol_size, interp_method='linear', indexing='ij', nb_feats=1, int_steps=0):
     """
-    Simple transform model for nearest-neighbor based transformation
+    Simple transform model 
     Note: this is essentially a wrapper for the neuron.utils.transform(..., interp_method='nearest')
     """
     ndims = len(vol_size)
 
     # nn warp model
-    subj_input = Input((*vol_size, 1), name='subj_input')
+    subj_input = Input((*vol_size, nb_feats), name='subj_input')
     trf_input = Input((*vol_size, ndims) , name='trf_input')
 
+    if int_steps > 0:
+        trf = nrn_layers.VecInt(method='ss', name='trf-int', int_steps=int_steps)(trf_input)
+    else:
+        trf = trf_input
+
     # note the nearest neighbour interpolation method
-    # note xy indexing because Guha's original code switched x and y dimensions
-    nn_output = nrn_layers.SpatialTransformer(interp_method='nearest', indexing=indexing)
-    nn_spatial_output = nn_output([subj_input, trf_input])
+    # use xy indexing when Guha's original code switched x and y dimensions
+    nn_output = nrn_layers.SpatialTransformer(interp_method=interp_method, indexing=indexing)
+    nn_spatial_output = nn_output([subj_input, trf])
     return keras.models.Model([subj_input, trf_input], nn_spatial_output)
+    
+def nn_trf(vol_size, indexing='ij', int_steps=0):
+    """
+    Simple transform model for nearest-neighbor based transformation
+    """
+    return trf_core(vol_size, interp_method='nearest', indexing=indexing, int_steps=int_steps)
 
 
 # Helper functions
