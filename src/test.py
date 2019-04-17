@@ -8,6 +8,7 @@ import tensorflow as tf
 import scipy.io as sio
 import numpy as np
 from keras.backend.tensorflow_backend import set_session
+import keras.backend as K
 from scipy.interpolate import interpn
 from restrict import restrict_GPU_tf, restrict_GPU_keras
 import time
@@ -20,6 +21,7 @@ import medipy
 import networks
 from medipy.metrics import dice
 import datagenerators
+import losses
 
 # Test file and anatomical labels we want to evaluate
 test_brain_file = open('val_files.txt')
@@ -33,42 +35,34 @@ val_vol_names = glob.glob(base_data_dir + 'validate/vols/*.npz')
 seg_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/validate/asegs/'
 
 def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
-    """
-    test
-
-    nf_enc and nf_dec
-    #nf_dec = [32,32,32,32,32,16,16,3]
-    # This needs to be changed. Ideally, we could just call load_model, and we wont have to
-    # specify the # of channels here, but the load_model is not working with the custom loss...
-    """  
     start_time = time.time()
+    good_labels = sio.loadmat('../data/labels.mat')['labels'][0]
+
+    # setup
     gpu = '/gpu:' + str(gpu_id)
-    print(gpu)
+    #     print(gpu)
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
     restrict_GPU_tf(str(gpu_id))
     restrict_GPU_keras(str(gpu_id))
 
-    # Anatomical labels we want to evaluate
-    labels = sio.loadmat('../data/labels.mat')['labels'][0]
-
-    # atlas = np.load('../data/atlas_norm.npz')
-    # atlas_vol = atlas['vol']
-    # atlas_seg = atlas['seg']
-    # atlas_vol = np.reshape(atlas_vol, (1,)+atlas_vol.shape+(1,))
-
-    atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
-    atlas_seg = nib.load('../data/t2_atlas_seg_027_S_2219.nii').get_data()
-
-    normalized_atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
-
-    # normalized_atlas_vol = nib.load('../data/t1_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
-    # atlas_seg = nib.load('../data/t1_atlas_seg.nii').get_data()
-
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     set_session(tf.Session(config=config))
+    
+    atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+    atlas_seg = nib.load('../data/t2_atlas_seg_027_S_2219.nii').get_data()
+    
+    atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
+
+    sz = atlas_seg.shape
+    z_inp1 = tf.placeholder(tf.float32, sz)
+    z_inp2 = tf.placeholder(tf.float32, sz)
+    z_out = losses.kdice(z_inp1, z_inp2, good_labels)
+    kdice_fn = K.function([z_inp1, z_inp2], [z_out])
+
+    trf_model = networks.trf_core(vol_size, nb_feats=len(good_labels)+1)
 
     # load weights of model
     with tf.device(gpu):
@@ -76,16 +70,10 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(1
         net.load_weights('../models/' + model_name +
                          '/' + str(epoch) + '.h5')
 
-    xx = np.arange(vol_size[1])
-    yy = np.arange(vol_size[0])
-    zz = np.arange(vol_size[2])
-    grid = np.rollaxis(np.array(np.meshgrid(xx, yy, zz)), 0, 4)
-
     dice_means = []
     dice_stds = []
 
     for step in range(0, n_test):
-
         # get data
         if n_test == 1:
             X_vol = nib.load('../t1_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
@@ -98,21 +86,28 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(1
             X_vol = max_clip - X_vol
 
         with tf.device(gpu):
-            pred = net.predict([X_vol, normalized_atlas_vol])
+            pred = net.predict([X_vol, atlas_vol])
+            all_labels = np.unique(X_seg)
+            for l in all_labels:
+                if l not in good_labels:
+                    X_seg[X_seg==l] = 0
+            for i in range(len(good_labels)):
+                X_seg[X_seg==good_labels[i]] = i+1
+            seg_onehot = tf.keras.utils.to_categorical(X_seg[0,:,:,:,0], num_classes=len(good_labels)+1)
+            warp_seg_onehot = trf_model.predict([seg_onehot[tf.newaxis,:,:,:,:], pred[1]])
+            warp_seg = np.argmax(warp_seg_onehot[0,:,:,:], axis=3)
+            
+            warp_seg_correct = np.zeros(warp_seg.shape)
+            for i in range(len(good_labels)):
+                warp_seg_correct[warp_seg==i+1] = good_labels[i]
+            
+            dice = kdice_fn([warp_seg_correct, atlas_seg])
 
-        # Warp segments with flow
-        flow = pred[1][0, :, :, :, :]
-        sample = flow+grid
-        sample = np.stack((sample[:, :, :, 1], sample[:, :, :, 0], sample[:, :, :, 2]), 3)
-        warp_seg = interpn((yy, xx, zz), X_seg[0, :, :, :, 0], sample, method='nearest', bounds_error=False, fill_value=0)
-
-        vals, _ = dice(warp_seg, atlas_seg, labels=labels, nargout=2)
-        # print(np.mean(vals), np.std(vals))
-        mean = np.mean(vals)
-        std = np.std(vals)
-        dice_means.append(mean)
-        dice_stds.append(std)
-        print(step, mean, std)
+            mean = np.mean(dice)
+            std = np.std(dice)
+            dice_means.append(mean)
+            dice_stds.append(std)
+            print(step, mean, std)
 
 
     print('average dice:', np.mean(dice_means))

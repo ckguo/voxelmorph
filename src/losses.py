@@ -280,8 +280,9 @@ def localMutualInformation(bin_centers,
 
     return loss
 
-def mind(d, patch_size, var=0.004, use_ssc=False, use_gaussian_kernel=False):
+def mind(d, patch_size, use_ssc=False, use_gaussian_kernel=False):
     # see http://www.mpheinrich.de/pub/MEDIA_mycopy.pdf
+    epsilon = 0.000001
     if use_gaussian_kernel:
         dist = tf.distributions.Normal(0., 1.)
 
@@ -310,22 +311,40 @@ def mind(d, patch_size, var=0.004, use_ssc=False, use_gaussian_kernel=False):
 
         # apply convolution
         conv = tf.nn.conv3d(diff[tf.newaxis,:,:,:,tf.newaxis], kernel, [1]*5, 'SAME')
-        return tf.exp(-conv/var)
+        return conv
 
     def mind_loss(y_true, y_pred):
         ndims = 3
         y_true = tf.squeeze(y_true)
         y_pred = tf.squeeze(y_pred)
         loss_tensor = 0
+
+        y_true_var = 0
+        y_pred_var = 0
         for i in range(ndims):
-            direction = [0]*3
+            direction = [0]*ndims
             direction[i] = d
 
-            loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
+            y_true_var += ssd_shift(y_true, direction)
+            y_pred_var += ssd_shift(y_pred, direction)
 
-            direction = [0]*3
+            direction = [0]*ndims
             direction[i] = -d
-            loss_tensor += tf.reduce_mean(tf.abs(ssd_shift(y_true, direction) - ssd_shift(y_pred, direction)))
+            y_true_var += ssd_shift(y_true, direction)
+            y_pred_var += ssd_shift(y_pred, direction)
+
+        y_true_var = y_true_var/(ndims*2) + epsilon
+        y_pred_var = y_pred_var/(ndims*2) + epsilon
+
+        for i in range(ndims):
+            direction = [0]*ndims
+            direction[i] = d
+
+            loss_tensor += tf.reduce_mean(tf.abs(tf.exp(-ssd_shift(y_true, direction)/y_true_var) - tf.exp(-ssd_shift(y_pred, direction)/y_pred_var)))
+
+            direction = [0]*ndims
+            direction[i] = -d
+            loss_tensor += tf.reduce_mean(tf.abs(tf.exp(-ssd_shift(y_true, direction)/y_true_var) - tf.exp(-ssd_shift(y_pred, direction)/y_pred_var)))
 
         return loss_tensor/(ndims*2)
 
