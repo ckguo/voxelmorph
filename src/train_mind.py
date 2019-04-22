@@ -37,11 +37,13 @@ def train(data_dir,
           steps_per_epoch,
           batch_size,
           load_model_file,
+          atlas_file,
           max_clip,
           distance,
           patch_size,
           use_ssc,
           use_gaussian_kernel,
+          use_fixed_var,
           initial_epoch=0):
     """
     model training function
@@ -60,7 +62,7 @@ def train(data_dir,
     """
 
     # load atlas from provided files. The atlas we used is 160x192x224.
-    atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+    atlas_vol = nib.load(atlas_file).get_data()[np.newaxis,...,np.newaxis]
     atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
     # atlas_vol = nib.load('../data/t1_atlas.nii').get_data()[np.newaxis,...,np.newaxis]
     vol_size = atlas_vol.shape[1:-1] 
@@ -126,7 +128,7 @@ def train(data_dir,
     # prepare callbacks
     save_file_name = os.path.join(model_dir, '{epoch:02d}.h5')
 
-    loss_function = losses.mind(distance, patch_size, use_ssc=use_ssc, use_gaussian_kernel=use_gaussian_kernel)
+    loss_function = losses.mind(distance, patch_size, use_ssc=use_ssc, use_gaussian_kernel=use_gaussian_kernel, use_fixed_var=use_fixed_var)
 
     # fit generator
     with tf.device(gpu):
@@ -185,6 +187,9 @@ if __name__ == "__main__":
     parser.add_argument("--load_model_file", type=str,
                         dest="load_model_file", default='../models/cvpr2018_vm2_l2.h5',
                         help="optional h5 model file to initialize with")
+    parser.add_argument("--atlas_file", type=str,
+                        dest="atlas_file", default='../data/t2_atlas_027_S_2219.nii',
+                        help="filename of the atlas to use")
     parser.add_argument("--max_clip", type=float,
                         dest="max_clip", default=0.7,
                         help="maximum input value to calculate bins")
@@ -198,5 +203,7 @@ if __name__ == "__main__":
     parser.set_defaults(use_ssc=False)
     parser.add_argument("--gaussian", dest="use_gaussian_kernel", action="store_true")
     parser.set_defaults(use_gaussian_kernel=False)
+    parser.add_argument("--fixed_var", dest="use_fixed_var", action="store_true")
+    parser.set_defaults(use_fixed_var=False)
     args = parser.parse_args()
     train(**vars(args))

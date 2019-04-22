@@ -34,7 +34,7 @@ base_data_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnis
 val_vol_names = glob.glob(base_data_dir + 'validate/vols/*.npz')
 seg_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/validate/asegs/'
 
-def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
+def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
     start_time = time.time()
     good_labels = sio.loadmat('../data/labels.mat')['labels'][0]
 
@@ -62,7 +62,7 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, vol_size=(1
     z_out = losses.kdice(z_inp1, z_inp2, good_labels)
     kdice_fn = K.function([z_inp1, z_inp2], [z_out])
 
-    trf_model = networks.trf_core(vol_size, nb_feats=len(good_labels)+1)
+    trf_model = networks.trf_core(vol_size, nb_feats=len(good_labels)+1, indexing=indexing)
 
     # load weights of model
     with tf.device(gpu):
@@ -130,6 +130,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_clip", type=float,
                         dest="max_clip", default=0.7,
                         help="maximum input value to calculate bins")
+    parser.add_argument("--indexing", type=str,
+                        dest="indexing", default='ij',
+                        help="indexing to use (ij or xy)")
     parser.add_argument("--invert_images", dest="invert_images", action="store_true")
     parser.set_defaults(invert_images=False)
 

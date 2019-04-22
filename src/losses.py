@@ -280,7 +280,7 @@ def localMutualInformation(bin_centers,
 
     return loss
 
-def mind(d, patch_size, use_ssc=False, use_gaussian_kernel=False):
+def mind(d, patch_size, use_ssc=False, use_gaussian_kernel=False, use_fixed_var=True):
     # see http://www.mpheinrich.de/pub/MEDIA_mycopy.pdf
     epsilon = 0.000001
     if use_gaussian_kernel:
@@ -319,23 +319,28 @@ def mind(d, patch_size, use_ssc=False, use_gaussian_kernel=False):
         y_pred = tf.squeeze(y_pred)
         loss_tensor = 0
 
-        y_true_var = 0
-        y_pred_var = 0
-        for i in range(ndims):
-            direction = [0]*ndims
-            direction[i] = d
+        if use_fixed_var:
+            y_true_var = 0.004
+            y_pred_var = 0.004
+        else:
+            y_true_var = 0
+            y_pred_var = 0
+            for i in range(ndims):
+                direction = [0]*ndims
+                direction[i] = d
 
-            y_true_var += ssd_shift(y_true, direction)
-            y_pred_var += ssd_shift(y_pred, direction)
+                y_true_var += ssd_shift(y_true, direction)
+                y_pred_var += ssd_shift(y_pred, direction)
 
-            direction = [0]*ndims
-            direction[i] = -d
-            y_true_var += ssd_shift(y_true, direction)
-            y_pred_var += ssd_shift(y_pred, direction)
+                direction = [0]*ndims
+                direction[i] = -d
+                y_true_var += ssd_shift(y_true, direction)
+                y_pred_var += ssd_shift(y_pred, direction)
 
-        y_true_var = y_true_var/(ndims*2) + epsilon
-        y_pred_var = y_pred_var/(ndims*2) + epsilon
+            y_true_var = y_true_var/(ndims*2) + epsilon
+            y_pred_var = y_pred_var/(ndims*2) + epsilon
 
+        print(y_true_var)
         for i in range(ndims):
             direction = [0]*ndims
             direction[i] = d
