@@ -37,6 +37,7 @@ def train(data_dir,
           steps_per_epoch,
           batch_size,
           load_model_file,
+          atlas_file,
           max_clip,
           local_mi,
           patch_size,
@@ -60,7 +61,7 @@ def train(data_dir,
     """
 
     # load atlas from provided files. The atlas we used is 160x192x224.
-    atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
+    atlas_vol = nib.load(atlas_file).get_data()[np.newaxis,...,np.newaxis]
     atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
     vol_size = atlas_vol.shape[1:-1] 
     # prepare data files
@@ -187,6 +188,9 @@ if __name__ == "__main__":
     parser.add_argument("--load_model_file", type=str,
                         dest="load_model_file", default='../models/cvpr2018_vm2_l2.h5',
                         help="optional h5 model file to initialize with")
+    parser.add_argument("--atlas_file", type=str,
+                        dest="atlas_file", default='../data/t2_atlas_027_S_2219.nii',
+                        help="filename of the atlas to use")
     parser.add_argument("--max_clip", type=float,
                         dest="max_clip", default=0.7,
                         help="maximum input value to calculate bins")
