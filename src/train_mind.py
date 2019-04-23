@@ -128,7 +128,11 @@ def train(data_dir,
 
     train_example_gen = datagenerators.example_gen(train_vol_names, batch_size=batch_size)
     atlas_vol_bs = np.repeat(atlas_vol, batch_size, axis=0)
-    cvpr2018_gen = datagenerators.cvpr2018_gen(train_example_gen, atlas_vol_bs, batch_size=batch_size)
+
+    if use_miccai:
+        data_gen = datagenerators.cvpr2018_gen(train_example_gen, atlas_vol_bs, batch_size=batch_size)
+    else:
+        data_gen = datagenerators.miccai2018_gen(train_example_gen, atlas_vol_bs, batch_size=batch_size)
 
     # prepare callbacks
     save_file_name = os.path.join(model_dir, '{epoch:02d}.h5')
@@ -154,7 +158,7 @@ def train(data_dir,
                          loss_weights=[1.0, reg_param])
             
         # fit
-        mg_model.fit_generator(cvpr2018_gen, 
+        mg_model.fit_generator(data_gen, 
                                initial_epoch=initial_epoch,
                                epochs=nb_epochs,
                                callbacks=[save_callback],

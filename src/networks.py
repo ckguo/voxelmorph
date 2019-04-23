@@ -62,6 +62,7 @@ def segmenter_feature_model(seg_path):
     return feature_model, num_features
 
 def unet_full(vol_size, enc_nf, dec_nf, full_size=True):
+    print('full_size', full_size)
 
     """
     unet architecture for voxelmorph models presented in the CVPR 2018 paper. 
@@ -116,7 +117,7 @@ def unet_full(vol_size, enc_nf, dec_nf, full_size=True):
     return Model(inputs=[src, tgt], outputs=[x] + x_enc[1:])
 
 def unet_core(vol_size, enc_nf, dec_nf, full_size=True):
-    unet_model = unet_full(vol_size, enc_nf, dec_nf, full_size=True)
+    unet_model = unet_full(vol_size, enc_nf, dec_nf, full_size=full_size)
 
     [src, tgt] = unet_model.inputs
     x = unet_model.output[0]
@@ -283,7 +284,7 @@ def trf_core(vol_size, interp_method='linear', indexing='ij', nb_feats=1, int_st
     nn_output = nrn_layers.SpatialTransformer(interp_method=interp_method, indexing=indexing)
     nn_spatial_output = nn_output([subj_input, trf])
     return keras.models.Model([subj_input, trf_input], nn_spatial_output)
-    
+
 def nn_trf(vol_size, indexing='ij', int_steps=0):
     """
     Simple transform model for nearest-neighbor based transformation
