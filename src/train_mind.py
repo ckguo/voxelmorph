@@ -44,6 +44,7 @@ def train(data_dir,
           use_ssc,
           use_gaussian_kernel,
           use_fixed_var,
+          use_miccai,
           initial_epoch=0):
     """
     model training function
@@ -104,7 +105,11 @@ def train(data_dir,
         # prepare the model
         # in the CVPR layout, the model takes in [image_1, image_2] and outputs [warped_image_1, flow]
         # in the experiments, we use image_2 as atlas
-        model = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
+        if use_miccai:
+            print('miccai: therefore diffeomorphic')
+            model = networks.miccai2018_net(vol_size, nf_enc, nf_dec)
+        else:
+            model = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
 
         # load initial weights
         if load_model_file is not None and load_model_file != '':
@@ -205,5 +210,7 @@ if __name__ == "__main__":
     parser.set_defaults(use_gaussian_kernel=False)
     parser.add_argument("--fixed_var", dest="use_fixed_var", action="store_true")
     parser.set_defaults(use_fixed_var=False)
+    parser.add_argument("--miccai", dest="use_miccai", action="store_true")
+    parser.set_defaults(use_miccai=False)
     args = parser.parse_args()
     train(**vars(args))
