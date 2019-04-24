@@ -34,7 +34,7 @@ base_data_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnis
 val_vol_names = glob.glob(base_data_dir + 'validate/vols/*.npz')
 seg_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/validate/asegs/'
 
-def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
+def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, use_miccai, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
     start_time = time.time()
     good_labels = sio.loadmat('../data/labels.mat')['labels'][0]
 
@@ -66,9 +66,14 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, v
 
     # load weights of model
     with tf.device(gpu):
-        net = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
-        net.load_weights('../models/' + model_name +
-                         '/' + str(epoch) + '.h5')
+        if use_miccai:
+            net = networks.miccai2018_net(vol_size, nf_enc, nf_dec)
+            net.load_weights('../models/' + model_name +
+                             '/' + str(epoch) + '.h5')
+        else:
+            net = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
+            net.load_weights('../models/' + model_name +
+                             '/' + str(epoch) + '.h5')
 
     dice_means = []
     dice_stds = []
@@ -135,6 +140,8 @@ if __name__ == "__main__":
                         help="indexing to use (ij or xy)")
     parser.add_argument("--invert_images", dest="invert_images", action="store_true")
     parser.set_defaults(invert_images=False)
+    parser.add_argument("--miccai", dest="use_miccai", action="store_true")
+    parser.set_defaults(use_miccai=False)
 
     args = parser.parse_args()
     test(**vars(args))
