@@ -62,7 +62,6 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, u
     z_out = losses.kdice(z_inp1, z_inp2, good_labels)
     kdice_fn = K.function([z_inp1, z_inp2], [z_out])
 
-    trf_model = networks.trf_core(vol_size, nb_feats=len(good_labels)+1, indexing=indexing)
 
     # load weights of model
     with tf.device(gpu):
@@ -70,10 +69,14 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, u
             net = networks.miccai2018_net(vol_size, nf_enc, nf_dec)
             net.load_weights('../models/' + model_name +
                              '/' + str(epoch) + '.h5')
+            trf_model = networks.trf_core(np.array(vol_size)/2, nb_feats=len(good_labels)+1, indexing=indexing)
+
         else:
             net = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
             net.load_weights('../models/' + model_name +
                              '/' + str(epoch) + '.h5')
+            trf_model = networks.trf_core(vol_size, nb_feats=len(good_labels)+1, indexing=indexing)
+
 
     dice_means = []
     dice_stds = []
