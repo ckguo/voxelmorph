@@ -16,6 +16,7 @@ from keras.backend.tensorflow_backend import set_session
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
 from keras.utils import multi_gpu_model 
+import nibabel as nib
 
 # project imports
 import datagenerators
@@ -29,7 +30,7 @@ import neuron.callbacks as nrn_gen
 def train(data_dir,
           atlas_file, 
           model,
-          model_dir,
+          model_name,
           gpu_id,
           lr,
           nb_epochs,
@@ -56,8 +57,10 @@ def train(data_dir,
     """
 
     # load atlas from provided files. The atlas we used is 160x192x224.
-    atlas_vol = np.load(atlas_file)['vol'][np.newaxis, ..., np.newaxis]
+    # atlas_vol = np.load(atlas_file)['vol'][np.newaxis, ..., np.newaxis]
+    atlas_vol = nib.load(atlas_file).get_data()[np.newaxis,...,np.newaxis]
     vol_size = atlas_vol.shape[1:-1] 
+
     # prepare data files
     # for the CVPR and MICCAI papers, we have data arranged in train/validate/test folders
     # inside each folder is a /vols/ and a /asegs/ folder with the volumes
@@ -79,15 +82,16 @@ def train(data_dir,
 
     assert data_loss in ['mse', 'cc', 'ncc'], 'Loss should be one of mse or cc, found %s' % data_loss
     if data_loss in ['ncc', 'cc']:
-        data_loss = losses.NCC().loss        
+        data_loss = losses.NCC().loss
 
+    model_dir = "../models/" + model_name
     # prepare model folder
     if not os.path.isdir(model_dir):
         os.mkdir(model_dir)
 
     # GPU handling
-    gpu = '/gpu:%d' % 0 # gpu_id
-    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+    gpu = '/gpu:%d' % gpu_id
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
@@ -101,7 +105,7 @@ def train(data_dir,
         model = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
 
         # load initial weights
-        if load_model_file is not None:
+        if load_model_file is not None and load_model_file != '':
             print('loading', load_model_file)
             model.load_weights(load_model_file)
 
@@ -109,10 +113,11 @@ def train(data_dir,
         model.save(os.path.join(model_dir, '%02d.h5' % initial_epoch))
 
     # data generator
-    nb_gpus = len(gpu_id.split(','))
-    assert np.mod(batch_size, nb_gpus) == 0, \
-        'batch_size should be a multiple of the nr. of gpus. ' + \
-        'Got batch_size %d, %d gpus' % (batch_size, nb_gpus)
+    # nb_gpus = len(gpu_id.split(','))
+    # assert np.mod(batch_size, nb_gpus) == 0, \
+    #     'batch_size should be a multiple of the nr. of gpus. ' + \
+    #     'Got batch_size %d, %d gpus' % (batch_size, nb_gpus)
+    nb_gpus = 1
 
     train_example_gen = datagenerators.example_gen(train_vol_names, batch_size=batch_size)
     atlas_vol_bs = np.repeat(atlas_vol, batch_size, axis=0)
@@ -150,20 +155,20 @@ def train(data_dir,
 if __name__ == "__main__":
     parser = ArgumentParser()
 
-    parser.add_argument("data_dir", type=str,
+    parser.add_argument("--data_dir", type=str,
+                        dest="data_dir", default='/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/train/vols/',
                         help="data folder")
-
     parser.add_argument("--atlas_file", type=str,
-                        dest="atlas_file", default='../data/atlas_norm.npz',
-                        help="gpu id number")
+                        dest="atlas_file", default='../data/t1_atlas.nii',
+                        help="atlas filename")
     parser.add_argument("--model", type=str, dest="model",
                         choices=['vm1', 'vm2', 'vm2double'], default='vm2',
                         help="Voxelmorph-1 or 2")
-    parser.add_argument("--model_dir", type=str,
-                        dest="model_dir", default='../models/',
+    parser.add_argument("--model_name", type=str,
+                        dest="model_name", default='test',
                         help="models folder")
-    parser.add_argument("--gpu", type=str, default=0,
-                        dest="gpu_id", help="gpu id number (or numbers separated by comma)")
+    parser.add_argument("--gpu", type=int, default=0,
+                        dest="gpu_id", help="gpu id number")
     parser.add_argument("--lr", type=float,
                         dest="lr", default=1e-4, help="learning rate")
     parser.add_argument("--epochs", type=int,

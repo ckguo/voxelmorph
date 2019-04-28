@@ -34,7 +34,7 @@ base_data_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnis
 val_vol_names = glob.glob(base_data_dir + 'validate/vols/*.npz')
 seg_dir = '/data/ddmg/voxelmorph/data/t1_mix/proc/resize256-crop_x32-adnisel/validate/asegs/'
 
-def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, use_miccai, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
+def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, use_miccai, atlas_file, atlas_seg_file, normalize_atlas, vol_size=(160,192,224), nf_enc=[16,32,32,32], nf_dec=[32,32,32,32,32,16,16]):
     start_time = time.time()
     good_labels = sio.loadmat('../data/labels.mat')['labels'][0]
 
@@ -51,10 +51,11 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, u
     config.allow_soft_placement = True
     set_session(tf.Session(config=config))
     
-    atlas_vol = nib.load('../data/t2_atlas_027_S_2219.nii').get_data()[np.newaxis,...,np.newaxis]
-    atlas_seg = nib.load('../data/t2_atlas_seg_027_S_2219.nii').get_data()
+    atlas_vol = nib.load(atlas_file).get_data()[np.newaxis,...,np.newaxis]
+    atlas_seg = nib.load(atlas_seg_file).get_data()
     
-    atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
+    if normalize_atlas:
+        atlas_vol = atlas_vol/np.max(atlas_vol) * max_clip
 
     sz = atlas_seg.shape
     z_inp1 = tf.placeholder(tf.float32, sz)
@@ -62,21 +63,19 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, u
     z_out = losses.kdice(z_inp1, z_inp2, good_labels)
     kdice_fn = K.function([z_inp1, z_inp2], [z_out])
 
-
     # load weights of model
     with tf.device(gpu):
         if use_miccai:
             net = networks.miccai2018_net(vol_size, nf_enc, nf_dec)
             net.load_weights('../models/' + model_name +
                              '/' + str(epoch) + '.h5')
-            trf_model = networks.trf_core(np.array(vol_size)/2, nb_feats=len(good_labels)+1, indexing=indexing)
+            trf_model = networks.trf_core((vol_size[0]//2, vol_size[1]//2, vol_size[2]//2), nb_feats=len(good_labels)+1, indexing=indexing)
 
         else:
             net = networks.cvpr2018_net(vol_size, nf_enc, nf_dec)
             net.load_weights('../models/' + model_name +
                              '/' + str(epoch) + '.h5')
             trf_model = networks.trf_core(vol_size, nb_feats=len(good_labels)+1, indexing=indexing)
-
 
     dice_means = []
     dice_stds = []
@@ -103,7 +102,7 @@ def test(model_name, epoch, gpu_id, n_test, invert_images, max_clip, indexing, u
                 X_seg[X_seg==good_labels[i]] = i+1
             seg_onehot = tf.keras.utils.to_categorical(X_seg[0,:,:,:,0], num_classes=len(good_labels)+1)
             warp_seg_onehot = trf_model.predict([seg_onehot[tf.newaxis,:,:,:,:], pred[1]])
-            warp_seg = np.argmax(warp_seg_onehot[0,:,:,:], axis=3)
+            warp_seg = np.argmax(warp_seg_onehot[0,:,:,:,:], axis=3)
             
             warp_seg_correct = np.zeros(warp_seg.shape)
             for i in range(len(good_labels)):
@@ -141,8 +140,16 @@ if __name__ == "__main__":
     parser.add_argument("--indexing", type=str,
                         dest="indexing", default='ij',
                         help="indexing to use (ij or xy)")
+    parser.add_argument("--atlas_file", type=str,
+                        dest="atlas_file", default='../data/t2_atlas_027_S_2219.nii',
+                        help="atlas filename")
+    parser.add_argument("--atlas_seg_file", type=str,
+                        dest="atlas_seg_file", default='../data/t2_atlas_seg_027_S_2219.nii',
+                        help="atlas seg filename")
     parser.add_argument("--invert_images", dest="invert_images", action="store_true")
     parser.set_defaults(invert_images=False)
+    parser.add_argument("--normalize_atlas", dest="normalize_atlas", action="store_true")
+    parser.set_defaults(normalize_atlas=False)
     parser.add_argument("--miccai", dest="use_miccai", action="store_true")
     parser.set_defaults(use_miccai=False)
 
